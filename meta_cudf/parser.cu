@@ -193,7 +193,7 @@ template<class EndOfLineT>
 void find_newlines(char* d_input, size_t input_size, InputIndex* d_indices, int count)
 {
     InputIndex just_zero = 0;
-    cudaMemcpyAsync(d_indices, &just_zero, sizeof(InputIndex), cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(d_indices, &just_zero, sizeof(InputIndex), cudaMemcpyHostToDevice, stream);  //Skopiowanie pierwszego indeksu ograniczającego linie, czyli 0
 
     cub::ArgIndexInputIterator<uint32_t*> arg_iter(reinterpret_cast<uint32_t*>(d_input));
     OutputIndicesIterator<EndOfLineT> out_iter(d_indices + 1); // +1, we need to add 0 at index 0
@@ -251,10 +251,10 @@ cudf::io::table_with_metadata generate_example_metadata(const char* filename, in
     launch_kernel(device_buffers);
     auto cudf_table  = device_buffers.parser_output_buffers.ToCudf(stream);
 
-    vector<string> column_names(cudf_table.num_columns());
+    vector<cudf::io::column_name_info> column_names(cudf_table.num_columns());
 
     generate(column_names.begin(), column_names.end(), [i = 1]() mutable {
-        return "Column " + to_string(i++);
+        return cudf::io::column_name_info("Column " + to_string(i++));
     });
 
     cudf::io::table_metadata metadata{column_names};
@@ -375,10 +375,10 @@ benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunch
     result.count = input.count;
     result.parser_output_buffers = ParserOutputDevice<BaseAction>(conf, result.count);
     cudaMalloc(&result.readonly_buffers, sizeof(BUF));
-    cudaMalloc(&result.input_buffer, input.data.size());
-    cudaMalloc(&result.indices_buffer, sizeof(InputIndex) * (input.count + 1));
+    cudaMalloc(&result.input_buffer, input.data.size());   //Wejsciowy plik trzymany w pamieci GPU
+    cudaMalloc(&result.indices_buffer, sizeof(InputIndex) * (input.count + 1));   //InputIndex to uint32, tu alokujemy indeksy na newliny
     cudaMalloc(&result.err_buffer, sizeof(ParsingError) * input.count);
-    cudaMalloc(&result.output_buffers, sizeof(void*) * REQUEST_COUNT);
+    cudaMalloc(&result.output_buffers, sizeof(void*) * REQUEST_COUNT);   //Wyjsciowy output
 
     result.host_output_buffers = vector<void*>(REQUEST_COUNT);
     for (int i = 0; i < REQUEST_COUNT; ++i)
@@ -408,6 +408,12 @@ benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunch
             std::cerr << "Unknown end of line character!";
             throw std::runtime_error("Unknown end of line character");
     }
+
+//    auto test = vector<uint32_t>(2001);
+//    cudaMemcpy(test.data(), result.indices_buffer, 2001, cudaMemcpyDeviceToHost);
+
+    //Dzieki sprytnej implementacji iteratora, result.indices_buffer zawiera indeksy charakterow a nie uint32_t,
+    //dokladnie sa to indeksy nowych linii
 
     return result;
 }
