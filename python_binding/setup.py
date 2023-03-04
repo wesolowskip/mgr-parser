@@ -176,7 +176,7 @@ extensions = [
             ]
             + ["..", "."]
         ),
-        libraries=["cudart", "cudf"] + pa.get_libraries() + ["arrow_cuda"] + ["meta-cudf-parser-1"],
+        libraries=["cudart", "cudf"] + pa.get_libraries() + ["meta-cudf-parser-1"],
         language="c++",
         extra_compile_args=["-std=c++17"],
     )

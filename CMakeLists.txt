@@ -239,3 +239,37 @@ target_compile_options(meta-json-parser-benchmark PRIVATE $<$<COMPILE_LANGUAGE:C
 target_link_libraries(meta-json-parser-benchmark PRIVATE
                       nvToolsExt  # for easier profiling of meta-json-parser-benchmark executable
 )
+
+
+add_executable(meta-cudf-parser-mgr)
+
+target_sources(meta-cudf-parser-mgr PRIVATE
+        meta_cudf/main.cpp
+        )
+
+target_compile_definitions(meta-cudf-parser-mgr PRIVATE
+        HAVE_LIBCUDF=1
+        )
+
+target_include_directories(
+        meta-cudf-parser-mgr PUBLIC
+        /opt/conda/envs/rapids/include/libcudf
+        /usr/local/cuda/include
+)
+
+## NOTE: needs to be added as the last directory to be checked, because
+## it can contain outdated Boost library (which in Ubuntu 20.04 is Boost 1.72)
+target_include_directories(meta-cudf-parser-mgr AFTER PUBLIC
+        /opt/conda/envs/rapids/include
+        )
+
+target_compile_features(meta-cudf-parser-mgr INTERFACE cxx_std_17 cuda_std_17)
+
+target_compile_options(meta-cudf-parser-mgr PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr> $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_link_libraries(meta-cudf-parser-mgr PRIVATE
+        cudf
+        -L/usr/local/cuda/lib64 -L/usr/local/lib
+        -L/opt/conda/envs/rapids/lib
+        )
+target_link_libraries(meta-cudf-parser-mgr PRIVATE meta-cudf-parser-1)
