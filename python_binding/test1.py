@@ -2,6 +2,10 @@ from timeit import default_timer as timer
 import cudf
 import metajsonparser as mp
 
+from time import sleep
+
+sleep(2)
+
 start = timer()
 mp.read_json("../meta_cudf/test.jsonl", 440000).head()
 end = timer()

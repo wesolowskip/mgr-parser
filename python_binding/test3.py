@@ -6,3 +6,16 @@ start = timer()
 cudf.read_json("../meta_cudf/test.jsonl", lines=True).head()
 end = timer()
 print(end - start) # Time in seconds, e.g. 5.38091952400282
+
+start = timer()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True).head()
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282
+start = timer()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True).head()
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282
+start = timer()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True).head()
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282

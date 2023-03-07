@@ -7,6 +7,19 @@ import cudf
 import metajsonparser as mp
 
 start = timer()
-cudf.read_json("../meta_cudf/test.jsonl", lines=True).head()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True, engine='cudf_legacy').head()
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282
+
+start = timer()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True, engine='cudf_legacy').head()
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282
+start = timer()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True, engine='cudf_legacy').head()
+end = timer()
+print(end - start) # Time in seconds, e.g. 5.38091952400282
+start = timer()
+cudf.read_json("../meta_cudf/test.jsonl", lines=True, engine='cudf_legacy').head()
 end = timer()
 print(end - start) # Time in seconds, e.g. 5.38091952400282
