@@ -16,6 +16,6 @@ def read_json(fname: str, count: int):
     print(fname, count)
     c_out_table =  generate_example_metadata(c_string, count)
 
-    column_names = [x.decode() for x in c_out_table.metadata.column_names]
+    column_names = [x.name.decode() for x in c_out_table.metadata.schema_info]
     df = data_from_unique_ptr(move(c_out_table.tbl), column_names=column_names)
     return cudf.DataFrame._from_data(*df)

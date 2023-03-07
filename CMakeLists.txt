@@ -26,6 +26,8 @@ ENDIF()
 
 include(GoogleTest)
 
+find_package(rmm)
+
 add_library(lib-meta-json-parser INTERFACE)
 
 target_compile_features(lib-meta-json-parser INTERFACE cxx_std_17 cuda_std_17)
@@ -88,7 +90,6 @@ target_sources(lib-meta-json-parser INTERFACE
     include/meta_json_parser/output_printer.cuh
     include/meta_json_parser/parse.cuh
     include/meta_json_parser/parser_configuration.h
-    include/meta_json_parser/parser_input.h
     include/meta_json_parser/parser_kernel.cuh
     include/meta_json_parser/parser_output_device.cuh
     include/meta_json_parser/parser_output_host.cuh
@@ -110,6 +111,8 @@ target_sources(meta-cudf-parser-1 PUBLIC
     include/meta_json_parser/checkpoint_results.h
 )
 target_link_libraries(meta-cudf-parser-1 PUBLIC lib-meta-json-parser)
+
+#target_link_libraries(meta-cudf-parser-1 INTERFACE rmm::rmm)
 
 target_include_directories(meta-cudf-parser-1 PUBLIC
     "${PROJECT_SOURCE_DIR}/meta_cudf/opt1"
@@ -273,3 +276,4 @@ target_link_libraries(meta-cudf-parser-mgr PRIVATE
         -L/opt/conda/envs/rapids/lib
         )
 target_link_libraries(meta-cudf-parser-mgr PRIVATE meta-cudf-parser-1)
+target_link_libraries(meta-cudf-parser-mgr PUBLIC  rmm::rmm)

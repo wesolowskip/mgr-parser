@@ -4,6 +4,8 @@
 
 #include <boost/mp11.hpp>
 #include <cudf/io/types.hpp>
+#include <rmm/device_buffer.hpp>
+#include <rmm/device_scalar.hpp>
 #include <thrust/logical.h>
 #include <iomanip>
 #include <meta_json_parser/parser_output_device.cuh>
@@ -14,8 +16,6 @@
 
 using namespace std;
 using namespace boost::mp11;
-
-cudaStream_t stream;
 
 enum class end_of_line {
     unknown,
@@ -173,83 +173,89 @@ struct benchmark_input
 struct benchmark_device_buffers
 {
     ParserOutputDevice<BaseAction> parser_output_buffers;
-    char* readonly_buffers;
-    char* input_buffer;
-    InputIndex* indices_buffer;
-    ParsingError* err_buffer;
-    void** output_buffers;
+    rmm::device_uvector<char> readonly_buffers;
+    rmm::device_uvector<char> input_buffer;
+    rmm::device_uvector<InputIndex> indices_buffer;
+    rmm::device_uvector<ParsingError> err_buffer;
+    rmm::device_uvector<void*> output_buffers;
     int count;
 
     vector<void*> host_output_buffers;
+
+    benchmark_device_buffers(ParserOutputDevice<BaseAction>&& parser_output_buffers, rmm::device_uvector<char>&& readonly_buffers,
+                             rmm::device_uvector<char>&& input_buffer, rmm::device_uvector<InputIndex> indices_buffer,
+                             rmm::device_uvector<ParsingError>&& err_buffer, rmm::device_uvector<void*> output_buffers,
+                             vector<void*> host_output_buffers, int count):
+                             parser_output_buffers(std::move(parser_output_buffers)), readonly_buffers(std::move(readonly_buffers)),
+                             input_buffer(std::move(input_buffer)), indices_buffer(std::move(indices_buffer)), err_buffer(std::move(err_buffer)),
+                             output_buffers(std::move(output_buffers)), host_output_buffers(std::move(host_output_buffers)), count(count)
+    {}
 };
 
 benchmark_input get_input(const char* filename, int input_count);
 KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input);
-benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf);
+shared_ptr<benchmark_device_buffers> initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr);
 end_of_line detect_eol(benchmark_input& input);
-void launch_kernel(benchmark_device_buffers& device_buffers);
+void launch_kernel(shared_ptr<benchmark_device_buffers> device_buffers, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr);
 
 template<class EndOfLineT>
-void find_newlines(char* d_input, size_t input_size, InputIndex* d_indices, int count)
+void find_newlines(rmm::device_uvector<char>& d_input, size_t input_size, rmm::device_uvector<InputIndex>& d_indices, int count, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr)
 {
-    InputIndex just_zero = 0;
-    cudaMemcpyAsync(d_indices, &just_zero, sizeof(InputIndex), cudaMemcpyHostToDevice, stream);  //Skopiowanie pierwszego indeksu ograniczającego linie, czyli 0
+    d_indices.set_element_to_zero_async(0, stream); //Skopiowanie pierwszego indeksu ograniczającego linie, czyli 0
 
-    cub::ArgIndexInputIterator<uint32_t*> arg_iter(reinterpret_cast<uint32_t*>(d_input));
-    OutputIndicesIterator<EndOfLineT> out_iter(d_indices + 1); // +1, we need to add 0 at index 0
+    cub::ArgIndexInputIterator<uint32_t*> arg_iter(reinterpret_cast<uint32_t*>(d_input.data()));
+    OutputIndicesIterator<EndOfLineT> out_iter(d_indices.data() + 1); // +1, we need to add 0 at index 0
 
-    int* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-    int* d_num_selected;
-    cudaMalloc(&d_num_selected, sizeof(int));
+    auto d_num_selected = rmm::device_scalar<int>(stream, mr);
 
     cub::DeviceSelect::If(
-        d_temp_storage,
+        nullptr,
         temp_storage_bytes,
         arg_iter,
         out_iter,
-        d_num_selected,
+        d_num_selected.data(),
         (input_size + 3) / 4,
         IsNewLine<EndOfLineT>(),
         stream
     );
 
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, mr);
 
     cub::DeviceSelect::If(
-        d_temp_storage,
+        d_temp_storage.data(),
         temp_storage_bytes,
         arg_iter,
         out_iter,
-        d_num_selected,
+        d_num_selected.data(),
         (input_size + 3) / 4,
         IsNewLine<EndOfLineT>(),
         stream
     );
 
-    // Following lines could be commented out as it is only validation step
-    cudaStreamSynchronize(stream);
-    int h_num_selected = -1;
-    cudaMemcpy(&h_num_selected, d_num_selected, sizeof(int), cudaMemcpyDeviceToHost);
-    if (h_num_selected != count)
-    {
-        cout << "Found " << h_num_selected << " new lines instead of declared " << count << ".\n";
-        throw runtime_error("Invalid number of new lines.");
-    }
+//    // Following lines could be commented out as it is only validation step
+//    cudaStreamSynchronize(stream);
+//    int h_num_selected = -1;
+//    cudaMemcpy(&h_num_selected, d_num_selected, sizeof(int), cudaMemcpyDeviceToHost);
+//    if (h_num_selected != count)
+//    {
+//        cout << "Found " << h_num_selected << " new lines instead of declared " << count << ".\n";
+//        throw runtime_error("Invalid number of new lines.");
+//    }
 
-    cudaFree(d_temp_storage);
-    cudaFree(d_num_selected);
 }
 
 cudf::io::table_with_metadata generate_example_metadata(const char* filename, int count) {
-	cudaStreamCreate(&stream);
+//	cudaStreamCreate(&stream);
+    rmm::cuda_stream stream;
+    rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
     auto input = get_input(filename, count);
 
     KernelLaunchConfiguration conf = prepare_dynamic_config(input);
-    benchmark_device_buffers device_buffers = initialize_buffers(input, &conf);
-    launch_kernel(device_buffers);
-    auto cudf_table  = device_buffers.parser_output_buffers.ToCudf(stream);
+    shared_ptr<benchmark_device_buffers> device_buffers = initialize_buffers(input, &conf, stream, mr);
+    launch_kernel(device_buffers, stream, mr);
+    auto cudf_table  = device_buffers->parser_output_buffers.ToCudf(stream, mr);
 
     vector<cudf::io::column_name_info> column_names(cudf_table.num_columns());
 
@@ -265,7 +271,7 @@ cudf::io::table_with_metadata generate_example_metadata(const char* filename, in
     };
 }
 
-void launch_kernel(benchmark_device_buffers& device_buffers)
+void launch_kernel(shared_ptr<benchmark_device_buffers> device_buffers, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr)
 {
     using GroupSize = WorkGroupSize;
     constexpr int GROUP_SIZE = WorkGroupSize::value;
@@ -276,15 +282,15 @@ void launch_kernel(benchmark_device_buffers& device_buffers)
     using PC = ParserConfiguration<RT, BaseAction>;
     using PK = ParserKernel<PC>;
 
-    PK pk(device_buffers.parser_output_buffers.m_launch_config, stream);
+    PK pk(device_buffers->parser_output_buffers.m_launch_config, stream, mr);
 
     pk.Run(
-        device_buffers.input_buffer,
-        device_buffers.indices_buffer,
-        device_buffers.err_buffer,
-        device_buffers.output_buffers,
-        device_buffers.count,
-        device_buffers.host_output_buffers.data()
+        device_buffers->input_buffer.data(),
+        device_buffers->indices_buffer.data(),
+        device_buffers->err_buffer.data(),
+        device_buffers->output_buffers.data(),
+        device_buffers->count,
+        device_buffers->host_output_buffers.data()
     );
 }
 
@@ -356,7 +362,7 @@ KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input)
     return std::move(conf);
 }
 
-benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf)
+shared_ptr<benchmark_device_buffers> initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr)
 {
     using GroupSize = WorkGroupSize;
     constexpr int GROUP_SIZE = WorkGroupSize::value;
@@ -371,23 +377,25 @@ benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunch
     using OM = typename KC::OM;
     constexpr size_t REQUEST_COUNT = boost::mp11::mp_size<typename OutputConfiguration<BaseAction>::RequestList>::value;
 
-    benchmark_device_buffers result;
-    result.count = input.count;
-    result.parser_output_buffers = ParserOutputDevice<BaseAction>(conf, result.count);
-    cudaMalloc(&result.readonly_buffers, sizeof(BUF));
-    cudaMalloc(&result.input_buffer, input.data.size());   //Wejsciowy plik trzymany w pamieci GPU
-    cudaMalloc(&result.indices_buffer, sizeof(InputIndex) * (input.count + 1));   //InputIndex to uint32, tu alokujemy indeksy na newliny
-    cudaMalloc(&result.err_buffer, sizeof(ParsingError) * input.count);
-    cudaMalloc(&result.output_buffers, sizeof(void*) * REQUEST_COUNT);   //Wyjsciowy output
 
-    result.host_output_buffers = vector<void*>(REQUEST_COUNT);
+    auto result = make_shared<benchmark_device_buffers>(
+            ParserOutputDevice<BaseAction>(conf, input.count, stream, mr),
+            rmm::device_uvector<char>(sizeof(BUF), stream, mr),
+            rmm::device_uvector<char>(input.data.size(), stream, mr),
+            rmm::device_uvector<InputIndex>(input.count + 1, stream, mr),
+            rmm::device_uvector<ParsingError>(input.count, stream, mr),
+            rmm::device_uvector<void*>(REQUEST_COUNT, stream, mr),
+            vector<void*>(REQUEST_COUNT),
+            input.count
+    );
+
     for (int i = 0; i < REQUEST_COUNT; ++i)
     {
-        result.host_output_buffers[i] = result.parser_output_buffers.m_d_outputs[i].data().get();
+        result->host_output_buffers[i] = result->parser_output_buffers.m_d_outputs[i]->data();
     }
 
-    cudaMemcpyAsync(result.input_buffer, input.data.data(), input.data.size(), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(result.output_buffers, result.host_output_buffers.data(), sizeof(void*) * REQUEST_COUNT, cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(result->input_buffer.data(), input.data.data(), input.data.size(), cudaMemcpyHostToDevice, stream);
+    cudaMemcpyAsync(result->output_buffers.data(), result->host_output_buffers.data(), sizeof(void*) * REQUEST_COUNT, cudaMemcpyHostToDevice, stream);
 
     //End of line might be passed as an option to the program
     if (input.eol == end_of_line::unknown)
@@ -397,11 +405,11 @@ benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunch
     {
         case end_of_line::uniks:
             find_newlines<EndOfLine::Unix>
-                (result.input_buffer, input.data.size(), result.indices_buffer, input.count);
+                (result->input_buffer, input.data.size(), result->indices_buffer, input.count, stream, mr);
             break;
         case end_of_line::win:
             find_newlines<EndOfLine::Win>
-                (result.input_buffer, input.data.size(), result.indices_buffer, input.count);
+                (result->input_buffer, input.data.size(), result->indices_buffer, input.count, stream, mr);
             break;
         case end_of_line::unknown:
         default:
