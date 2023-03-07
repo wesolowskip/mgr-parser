@@ -153,16 +153,16 @@ struct CudfNumericColumn {
 		cudaEventRecord(gpu_beg, stream.value());
 #endif
 
-        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
-        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
-        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
-                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream, mr
-        );
+//        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
+//        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
+//        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
+//                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream, mr
+//        );
 
 		auto column = std::make_unique<cudf::column>(
 			cudf::data_type{cudf::type_to_id<OutputType>()}, //< The element type
 			static_cast<cudf::size_type>(n_elements), //< The number of elements in the column
-			std::move(v->release()) //< The column's data, as rmm::device_buffer or something convertible
+			std::move(output.m_d_outputs[OM::template TagIndex<TagT>::value]->release()) //< The column's data, as rmm::device_buffer or something convertible
 		);
 
 		columns.emplace_back(column.release());
@@ -204,16 +204,15 @@ struct CudfBoolColumn {
 		cudaEventRecord(gpu_beg, stream.value());
 #endif
 
-        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
-        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
-        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
-                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream, mr
-        );
-
+//        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
+//        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
+//        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
+//                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream, mr
+//        );
 		auto column = std::make_unique<cudf::column>(
 			cudf::data_type{cudf::type_id::BOOL8}, //< The element type: boolean using one byte per value
 			static_cast<cudf::size_type>(n_elements), //< The number of elements in the column
-			std::move(v->release()) //< The column's data, as rmm::device_buffer or something convertible
+			std::move(output.m_d_outputs[OM::template TagIndex<TagT>::value]->release()) //< The column's data, as rmm::device_buffer or something convertible
 		);
 
 		columns.emplace_back(column.release());
@@ -294,16 +293,16 @@ struct CudfDatetimeColumn {
 #endif
 
         //const uint8_t* data_ptr = output.m_d_outputs[idx++].data().get();
-        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
-        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
-        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
-                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream ,mr
-        );
+//        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
+//        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
+//        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
+//                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream ,mr
+//        );
 
 		auto column = std::make_unique<cudf::column>(
 			cudf::data_type{datetype_to_id<TimestampType>()}, //< The element type
 			static_cast<cudf::size_type>(n_elements), //< The number of elements in the column
-			std::move(v->release()) //< The column's data, as rmm::device_buffer or something convertible
+			std::move(output.m_d_outputs[OM::template TagIndex<TagT>::value]->release()) //< The column's data, as rmm::device_buffer or something convertible
 		);
 
 		columns.emplace_back(column.release());
@@ -417,25 +416,25 @@ struct CudfDynamicStringColumn {
         char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
         char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
 
-        auto* offsets_v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
-                std::move(*output.m_d_outputs[OM::template TagIndex<LengthRequestTag>::value]), stream, mr
-        );
+//        auto* offsets_v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
+//                std::move(*output.m_d_outputs[OM::template TagIndex<LengthRequestTag>::value]), stream, mr
+//        );
 
-		auto strdata_v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
-                std::move(*output.m_d_outputs[OM::template TagIndex<DynamicStringRequestTag>::value]), stream, mr
-        );
+//		auto strdata_v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
+//                std::move(*output.m_d_outputs[OM::template TagIndex<DynamicStringRequestTag>::value]), stream, mr
+//        );
 
 		auto offsets_column = std::make_unique<cudf::column>(
 			// hopefully cudf::type_id::UINT32 would work as well as cudf::type_id::INT32
 			cudf::data_type{cudf::type_to_id<LengthRequestType>()}, //< The element type of offsets
 			static_cast<cudf::size_type>(n_elements+1), //< The number of elements in the column
-			std::move(offsets_v->release()) //< The column's data, as rmm::device_buffer or something convertible
+			std::move(output.m_d_outputs[OM::template TagIndex<LengthRequestTag>::value]->release()) //< The column's data, as rmm::device_buffer or something convertible
 		);
 		auto strdata_column = std::make_unique<cudf::column>(
 			// NOTE: cudf::type_to_id<char>() returns cudf::type_id::EMPTY, not cudf::type_id::INT8 (???)
 			cudf::data_type{cudf::type_id::INT8}, //< The element type of `char`
 			static_cast<cudf::size_type>(total_size), //< The number of elements in the column
-			std::move(strdata_v->release()) //< The column's data, as rmm::device_buffer or something convertible
+			std::move(output.m_d_outputs[OM::template TagIndex<DynamicStringRequestTag>::value]->release()) //< The column's data, as rmm::device_buffer or something convertible
 		);
 
 		// - make strings column
@@ -497,18 +496,17 @@ struct CudfCategoricalColumn {
 
 		// Create in place object from std::move in order to not trigger destructor
 		// after variable ends its scope.
-        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
-        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
-        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
-                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream, mr
-        );
-
+//        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
+//        char* aligned_buffer = buffer + alignof(rmm::device_uvector<uint8_t>) - reinterpret_cast<intptr_t>(buffer) % alignof(rmm::device_uvector<uint8_t>);
+//        auto* v = new (aligned_buffer) rmm::device_uvector<uint8_t>(
+//                std::move(*output.m_d_outputs[OM::template TagIndex<TagT>::value]), stream, mr
+//        );
 
 		// TODO: add categories itself as a sibling column inside categorical
 		auto column = std::make_unique<cudf::column>(
 			cudf::data_type{cudf::type_to_id<OutputType>()}, //< The element type
 			static_cast<cudf::size_type>(n_elements), //< The number of elements in the column
-			std::move(v->release()) //< The column's data, as rmm::device_buffer or something convertible
+			std::move(output.m_d_outputs[OM::template TagIndex<TagT>::value]->release()) //< The column's data, as rmm::device_buffer or something convertible
 		);
 
 		columns.emplace_back(column.release());
