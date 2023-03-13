@@ -190,7 +190,7 @@ struct JStringDynamicCopy
 			d_num_selected_out,
 			count * dynamic_size,
 			IsNotNullByte(),
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		if (temp_storage_bytes > CUB_BUFFER_SIZE - 256)
@@ -207,7 +207,7 @@ struct JStringDynamicCopy
 			d_num_selected_out,
 			count * dynamic_size,
 			IsNotNullByte(),
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		cub::DeviceScan::InclusiveSum(
@@ -216,7 +216,7 @@ struct JStringDynamicCopy
 			lengths,
 			lengths,
 			count + 1,
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		if (temp_storage_bytes > CUB_BUFFER_SIZE - 256)
@@ -231,7 +231,7 @@ struct JStringDynamicCopy
 			lengths,
 			lengths,
 			count + 1,
-			pk.m_stream.value()
+			pk.m_stream
 		);
 	}
 
@@ -467,7 +467,7 @@ struct JStringDynamicCopyV2
 			lengths,
 			lengths,
 			count + 1,
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		if (temp_storage_bytes > CUB_BUFFER_SIZE)
@@ -482,7 +482,7 @@ struct JStringDynamicCopyV2
 			lengths,
 			lengths,
 			count + 1,
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		const int block = 1024;
@@ -494,7 +494,7 @@ struct JStringDynamicCopyV2
 
 		const int group = 32;
 		makeKernelLauncher(&g_gather_strings_v2<typename PK::PC, Options>)
-		  ((count * group + 1024) / 1024, { group, block / group, 1 }, 0, pk.m_stream.value())
+		  ((count * group + 1024) / 1024, { group, block / group, 1 }, 0, pk.m_stream)
 		  (reinterpret_cast<const uint8_t*>(input), offsets, lengths, reinterpret_cast<uint8_t*>(content), count);
 	}
 
@@ -608,7 +608,7 @@ struct JStringDynamicCopyV3
 			lengths,
 			lengths,
 			count + 1,
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		if (temp_storage_bytes > CUB_BUFFER_SIZE)
@@ -623,14 +623,14 @@ struct JStringDynamicCopyV3
 			lengths,
 			lengths,
 			count + 1,
-			pk.m_stream.value()
+			pk.m_stream
 		);
 
 		const int block = 1024;
 
 		const int group = 32;
 		makeKernelLauncher(&g_gather_strings_even_spaced<typename PK::PC>)
-		  ((count * group + 1024) / 1024, { group, block / group, 1 }, 0, pk.m_stream.value())
+		  ((count * group + 1024) / 1024, { group, block / group, 1 }, 0, pk.m_stream)
 		  (reinterpret_cast<const uint8_t*>(content), dynamic_size, lengths, reinterpret_cast<uint8_t*>(out_content), count);
 	}
 

@@ -84,7 +84,7 @@ struct ParserKernel
 		m_cub_buffer = static_cast<uint8_t*>(m_mr->allocate(CUB_BUFFER_SIZE, m_stream));
 		ROB rob;
 		M3::FillReadOnlyBuffer(rob, m_launch_config);
-        cudaMemcpyAsync(m_d_rob, &rob, sizeof(ROB), cudaMemcpyHostToDevice, m_stream.value());
+        cudaMemcpyAsync(m_d_rob, &rob, sizeof(ROB), cudaMemcpyHostToDevice, m_stream);
 	}
 
 	void Run(

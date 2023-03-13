@@ -150,7 +150,7 @@ struct CudfNumericColumn {
 
 		perf_clock::time_point cpu_beg, cpu_end;
 		cpu_beg = perf_clock::now();
-		cudaEventRecord(gpu_beg, stream.value());
+		cudaEventRecord(gpu_beg, stream);
 #endif
 
 //        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
@@ -168,7 +168,7 @@ struct CudfNumericColumn {
 		columns.emplace_back(column.release());
 
 #ifdef PROFILE_CUDF_CONVERSION
-		cudaEventRecord(gpu_end, stream.value());
+		cudaEventRecord(gpu_end, stream);
 		cpu_end = perf_clock::now();
 
 		int64_t cpu_ns = (cpu_end - cpu_beg).count();
@@ -201,7 +201,7 @@ struct CudfBoolColumn {
 		std::cout << "taken from column " << OM::template TagIndex<TagT>::value << "\n";
 		perf_clock::time_point cpu_beg, cpu_end;
 		cpu_beg = perf_clock::now();
-		cudaEventRecord(gpu_beg, stream.value());
+		cudaEventRecord(gpu_beg, stream);
 #endif
 
 //        char buffer[sizeof(rmm::device_uvector<uint8_t>) + alignof(rmm::device_uvector<uint8_t>)];
@@ -218,7 +218,7 @@ struct CudfBoolColumn {
 		columns.emplace_back(column.release());
 
 #ifdef PROFILE_CUDF_CONVERSION
-		cudaEventRecord(gpu_end, stream.value());
+		cudaEventRecord(gpu_end, stream);
 		cpu_end = perf_clock::now();
 
 		int64_t cpu_ns = (cpu_end - cpu_beg).count();
@@ -289,7 +289,7 @@ struct CudfDatetimeColumn {
 #ifdef PROFILE_CUDF_CONVERSION
 		perf_clock::time_point cpu_beg, cpu_end;
 		cpu_beg = perf_clock::now();
-		cudaEventRecord(gpu_beg, stream.value());
+		cudaEventRecord(gpu_beg, stream);
 #endif
 
         //const uint8_t* data_ptr = output.m_d_outputs[idx++].data().get();
@@ -308,7 +308,7 @@ struct CudfDatetimeColumn {
 		columns.emplace_back(column.release());
 
 #ifdef PROFILE_CUDF_CONVERSION
-		cudaEventRecord(gpu_end, stream.value());
+		cudaEventRecord(gpu_end, stream);
 		cpu_end = perf_clock::now();
 
 		int64_t cpu_ns = (cpu_end - cpu_beg).count();
@@ -347,7 +347,7 @@ struct CudfStaticStringColumn {
 			<< ")\n";
 		perf_clock::time_point cpu_beg, cpu_end;
 		cpu_beg = perf_clock::now();
-		cudaEventRecord(gpu_beg, stream.value());
+		cudaEventRecord(gpu_beg, stream);
 #endif
 
 		void* data_ptr = (void *)(output.template Pointer<TagT>());
@@ -365,7 +365,7 @@ struct CudfStaticStringColumn {
 		columns.emplace_back(column.release());
 
 #ifdef PROFILE_CUDF_CONVERSION
-		cudaEventRecord(gpu_end, stream.value());
+		cudaEventRecord(gpu_end, stream);
 		cpu_end = perf_clock::now();
 
 		int64_t cpu_ns = (cpu_end - cpu_beg).count();
@@ -407,7 +407,7 @@ struct CudfDynamicStringColumn {
 		perf_clock::time_point cpu_beg, cpu_end;
 
 		cpu_beg = perf_clock::now();
-		cudaEventRecord(gpu_beg, stream.value());
+		cudaEventRecord(gpu_beg, stream);
 #endif
 
 		// - construct child columns
@@ -454,7 +454,7 @@ struct CudfDynamicStringColumn {
 		columns.emplace_back(column.release());
 
 #ifdef PROFILE_CUDF_CONVERSION
-		cudaEventRecord(gpu_end, stream.value());
+		cudaEventRecord(gpu_end, stream);
 		cpu_end = perf_clock::now();
 
 		int64_t cpu_ns = (cpu_end - cpu_beg).count();
@@ -491,7 +491,7 @@ struct CudfCategoricalColumn {
 		std::cout << "taken from column " << OM::template TagIndex<TagT>::value << "\n";
 		perf_clock::time_point cpu_beg, cpu_end;
 		cpu_beg = perf_clock::now();
-		cudaEventRecord(gpu_beg, stream.value());
+		cudaEventRecord(gpu_beg, stream);
 #endif
 
 		// Create in place object from std::move in order to not trigger destructor
@@ -512,7 +512,7 @@ struct CudfCategoricalColumn {
 		columns.emplace_back(column.release());
 
 #ifdef PROFILE_CUDF_CONVERSION
-		cudaEventRecord(gpu_end, stream.value());
+		cudaEventRecord(gpu_end, stream);
 		cpu_end = perf_clock::now();
 
 		int64_t cpu_ns = (cpu_end - cpu_beg).count();
@@ -647,7 +647,7 @@ struct ParserOutputDevice
 			using Tag = typename Request::OutputTag;
 			const size_t size = OM::template ToAlloc<Tag>(m_launch_config, m_size);
 			if (!OM::template HaveOption<Tag, OutputOptHelpBuffer>())
-				cudaMemcpyAsync(result.m_h_outputs[idx].data(), m_d_outputs[idx]->data(), size, cudaMemcpyDeviceToHost, stream.value());
+				cudaMemcpyAsync(result.m_h_outputs[idx].data(), m_d_outputs[idx]->data(), size, cudaMemcpyDeviceToHost, stream);
 			//TODO make result.m_h_outputs depend on OutputOptHelpBuffer and adjust its size instead of skipping elements
 			++idx;
 		});

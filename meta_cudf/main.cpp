@@ -25,10 +25,10 @@ int main() {
 
     cout << std::filesystem::current_path();
     const char* fname = "../python_binding/test/sample_2000.json";
-    int lines = 440000;
+    int lines = 1;
 
     auto start = high_resolution_clock::now();
-    auto test = generate_example_metadata(fname, lines);
+    auto test = generate_example_metadata(fname, 473, 603, lines, end_of_line::uniks);
     auto stop = high_resolution_clock::now();
     auto duration = duration_cast<microseconds>(stop - start);
     std::cout <<  "Duraction: " << duration.count() << "\n";
