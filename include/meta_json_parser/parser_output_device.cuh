@@ -683,11 +683,12 @@ struct ParserOutputDevice
 		});
 
 		// create a table (which will be turned into DataFrame equivalent)
-		std::cout << "created table...\n";
 		cudf::table table{std::move(columns)}; // std::move or std::forward
+#ifndef NDEBUG
+        std::cout << "created table...\n";
 		std::cout << "...with " << table.num_columns() << " / " << n_columns
 		          << " columns and " << table.num_rows() << " rows\n";
-
+#endif
 		return table;
 	}
 #endif /* defined(HAVE_LIBCUDF) */
