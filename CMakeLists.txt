@@ -110,9 +110,13 @@ target_sources(meta-cudf-parser-1 PUBLIC
     include/meta_json_parser/checkpoint_results.cpp
     include/meta_json_parser/checkpoint_results.h
 )
+if (USE_LIBCUDF)
+    target_sources(meta-cudf-parser-1 PUBLIC
+            meta_cudf/dask_integration.cu
+            meta_cudf/dask_integration.cuh
+    )
+endif()
 target_link_libraries(meta-cudf-parser-1 PUBLIC lib-meta-json-parser)
-
-#target_link_libraries(meta-cudf-parser-1 INTERFACE rmm::rmm)
 
 target_include_directories(meta-cudf-parser-1 PUBLIC
     "${PROJECT_SOURCE_DIR}/meta_cudf/opt1"

@@ -1,7 +1,7 @@
 import os
 from glob import glob
 from itertools import islice
-from typing import Iterator, Optional, Tuple, Union
+from typing import Iterable, Optional, Union
 
 import cudf
 from dask import compute, dataframe as dd, delayed
@@ -25,7 +25,7 @@ cdef extern from "parser.cuh":
     cudf_io_types.table_with_metadata generate_example_metadata(const char * filename, size_t offset, size_t size,
                                                                 int count, end_of_line eol, bint force_host_read)
 
-def read_json(fname: str, count: int, byte_range: tuple[int, int] = (0, 0), eol: Optional[str] = None,
+def read_json(fname: str, count: int, byte_range: Optional[tuple[int, int]] = None, eol: Optional[str] = None,
               force_host_read: Optional[bool] = False):
     cdef end_of_line c_eol
 
@@ -46,40 +46,30 @@ def read_json(fname: str, count: int, byte_range: tuple[int, int] = (0, 0), eol:
     cdef cudf_io_types.table_with_metadata c_out_table
     py_byte_string = fname.encode('ASCII')
     cdef const char * c_string = py_byte_string
-    print(fname, count)
     c_out_table = generate_example_metadata(c_string, c_offset, c_size, count, c_eol, force_host_read)
 
     column_names = [x.name.decode() for x in c_out_table.metadata.schema_info]
     df = data_from_unique_ptr(move(c_out_table.tbl), column_names=column_names)
     return cudf.DataFrame._from_data(*df)
 
-# cdef struct block_data:
-#     ssize_t last_newline
-#     ssize_t newlines_count
-#     bint win_eol
-
-block_data = Tuple[int, int, bool]
+cdef extern from "dask_integration.cuh":
+    cdef struct block_data:
+        ssize_t last_eol
+        ssize_t num_newlines
+        bint win_eol
+    block_data preprocess_block(const char * filename, size_t offset, size_t size, bint force_host_read)
 
 @delayed
 def _preprocess_block(
-        filename: str, byte_range: tuple[int, int]
-) -> block_data:
-    with open(filename, "r") as f:
-        f.seek(byte_range[0])
-        content = f.read(byte_range[1])
-    last_eol = -1
-    num_lines = 0
-    win_eol = False
-    for i, c in enumerate(reversed(content)):
-        if c == '\n':
-            if last_eol == -1:
-                last_eol = byte_range[0] + len(content) - 1 - i
-            num_lines += 1
-        elif c == '\r':
-            win_eol = True
-    return last_eol, num_lines, win_eol
+        fname: str, byte_range: tuple[int, int], force_host_read: bool
+) -> dict:
+    py_byte_string = fname.encode('ASCII')
+    cdef const char * c_string = py_byte_string
+    cdef size_t c_offset = byte_range[0]
+    cdef size_t c_size = byte_range[1]
+    return preprocess_block(c_string, c_offset, c_size, force_host_read)
 
-def _resolve_filenames(path):
+def _resolve_filenames(path) -> list[str]:
     if isinstance(path, list):
         filenames = path
     elif isinstance(path, str):
@@ -95,17 +85,15 @@ def _resolve_filenames(path):
 
     return filenames
 
-def _get_blocks_metadata(
-        preprocessed_blocks_data: Iterator[block_data]
-) -> list[tuple[tuple[int, int], int, str]]:
+def _get_blocks_metadata(preprocessed_blocks_data: Iterable[dict]) -> list[tuple[tuple[int, int], int, str]]:
     result = []
     end = 0
-    for last_eol, num_lines, win_eol in preprocessed_blocks_data:
+    for bd in preprocessed_blocks_data:
         start = end
-        end = last_eol + 1
+        end = bd["last_eol"] + 1
         count = end - start
         if count:
-            result.append(((start, count), num_lines, "windows" if win_eol else "linux"))
+            result.append(((start, count), bd["num_newlines"], "windows" if bd["win_eol"] else "linux"))
     return result
 
 def read_json_ddf(
@@ -169,15 +157,14 @@ def read_json_ddf(
                 start,
                 blocksize,
             )
-            preprocess_tasks.append(apply(_preprocess_block, [fn, byte_range]))
+            preprocess_tasks.append(apply(_preprocess_block, [fn, byte_range, force_host_read]))
         group_sizes.append((size + blocksize - 1) // blocksize)
 
     assert sum(group_sizes) == len(preprocess_tasks)
 
-    # List of tuples
-    preprocessed_infos: list[block_data] = compute(*preprocess_tasks)
+    preprocessed_infos: list[dict] = compute(*preprocess_tasks)
     preprocessed_infos_iter = iter(preprocessed_infos)
-    file_infos_groups: list[islice] = [
+    file_infos_groups = [
         islice(preprocessed_infos_iter, group_size) for group_size in group_sizes
     ]
 
@@ -200,17 +187,15 @@ def _read_json_without_blocksize(path, meta: cudf.DataFrame, force_host_read: bo
     preprocess_tasks = []
 
     for fn in filenames:
-        size = os.path.getsize(fn)
-        preprocess_tasks.append(apply(_preprocess_block, [fn, [0, size]]))
+        preprocess_tasks.append(apply(_preprocess_block, [fn, (0, 0), force_host_read]))
 
-    # List of tuples
-    preprocessed_infos: list[block_data] = compute(*preprocess_tasks)
+    preprocessed_infos: list[dict] = compute(*preprocess_tasks)
 
     name = "read-json-ddf-" + tokenize(path)
 
-    graph = {(name, i): (apply, read_json, [fn, num_lines, (0, 0), "windows" if win_eol else "linux", force_host_read])
+    graph = {(name, i): (apply, read_json, [fn, info["num_newlines"], None, "windows" if info["win_eol"] else "linux", force_host_read])
              for
-             i, (fn, (_, num_lines, win_eol)) in enumerate(zip(filenames, preprocessed_infos))}
+             i, (fn, info) in enumerate(zip(filenames, preprocessed_infos))}
 
     divisions = [None] * (len(filenames) + 1)
 

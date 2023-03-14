@@ -1,4 +1,4 @@
-#include "dask_integration.h"
+#include "dask_integration.cuh"
 #include <filesystem>
 
 #include <cudf/io/datasource.hpp>
