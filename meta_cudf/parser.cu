@@ -9,6 +9,8 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_scalar.hpp>
 #include <thrust/logical.h>
+#include <thrust/host_vector.h>
+#include <thrust/system/cuda/experimental/pinned_allocator.h>
 #include <meta_json_parser/parser_output_device.cuh>
 #include <meta_json_parser/parser_kernel.cuh>
 #include <meta_json_parser/action/jstring.cuh>
@@ -181,7 +183,7 @@ struct benchmark_device_buffers
     rmm::device_uvector<void*> output_buffers;
     int count;
 
-    vector<void*> host_output_buffers;
+    thrust::host_vector<void*, thrust::cuda::experimental::pinned_allocator<void*>> host_output_buffers;
 
     benchmark_device_buffers(ParserOutputDevice<BaseAction>&& parser_output_buffers,
                              rmm::device_uvector<char>&& readonly_buffers,
@@ -311,7 +313,8 @@ void launch_kernel(shared_ptr<benchmark_device_buffers> device_buffers, rmm::cud
     );
 }
 
-end_of_line detect_eol(const vector<char>& input)
+template <class Alloc>
+end_of_line detect_eol(const thrust::host_vector<char, Alloc>& input)
 {
     auto found = std::find_if(input.cbegin(), input.cend(), [](const char& c) {
         return c == '\r' || c == '\n';
@@ -420,7 +423,7 @@ initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm:
         input.source->device_read_async(input.offset, input.size,
                                         reinterpret_cast<uint8_t*>(result->input_buffer.data()), stream);
     } else {
-        vector<char> h_data(input.size);
+        thrust::host_vector<char, thrust::cuda::experimental::pinned_allocator<char>> h_data(input.size);
         input.source->host_read(input.offset, input.size, reinterpret_cast<uint8_t*>(h_data.data()));
         //EOL detection only supported in non-GPU mode
         if (input.eol == end_of_line::unknown)
