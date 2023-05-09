@@ -18,10 +18,11 @@ cdef extern from "parser.cuh" namespace "end_of_line":
 
 cdef extern from "parser.cuh":
     cudf_io_types.table_with_metadata generate_example_metadata(const char * filename, size_t offset, size_t size,
-                                                                int count, end_of_line eol, bint force_host_read)
+                                                                int count, end_of_line eol, bint force_host_read,
+                                                                bint pinned_read)
 
 def read_json(fname: str, count: int, byte_range: Optional[tuple[int, int]] = None, eol: Optional[str] = None,
-              force_host_read: Optional[bool] = False):
+              force_host_read: bool = False, pinned_read: bool = True):
     cdef end_of_line c_eol
 
     if eol == "windows":
@@ -41,7 +42,7 @@ def read_json(fname: str, count: int, byte_range: Optional[tuple[int, int]] = No
     cdef cudf_io_types.table_with_metadata c_out_table
     py_byte_string = fname.encode('ASCII')
     cdef const char * c_string = py_byte_string
-    c_out_table = generate_example_metadata(c_string, c_offset, c_size, count, c_eol, force_host_read)
+    c_out_table = generate_example_metadata(c_string, c_offset, c_size, count, c_eol, force_host_read, pinned_read)
 
     column_names = [x.name.decode() for x in c_out_table.metadata.schema_info]
     df = data_from_unique_ptr(move(c_out_table.tbl), column_names=column_names)

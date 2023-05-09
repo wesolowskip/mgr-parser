@@ -174,7 +174,8 @@ struct benchmark_input
     int count;
     end_of_line eol;
     int bytes_per_string;
-    bool force_host_read;
+    bool try_gds;
+    bool pinned_read;
 };
 
 struct benchmark_device_buffers
@@ -203,7 +204,8 @@ struct benchmark_device_buffers
 };
 
 benchmark_input
-get_input(const char* filename, size_t offset, size_t size, int input_count, end_of_line eol, bool force_host_read);
+get_input(const char* filename, size_t offset, size_t size, int input_count, end_of_line eol, bool force_host_read,
+          bool pinned_read);
 
 KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input);
 
@@ -266,7 +268,7 @@ void find_newlines(rmm::device_uvector<char>& d_input, size_t input_size, rmm::d
 
 cudf::io::table_with_metadata
 generate_example_metadata(const char* filename, size_t offset, size_t size, int count, end_of_line eol,
-                          bool force_host_read)
+                          bool force_host_read, bool pinned_read)
 {
 
 
@@ -282,7 +284,7 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
     cudaEventRecord(start_parsing, stream);
 #endif
 
-    auto input = get_input(filename, offset, size, count, eol, force_host_read);
+    auto input = get_input(filename, offset, size, count, eol, force_host_read, pinned_read);
 
     KernelLaunchConfiguration conf = prepare_dynamic_config(input);
     shared_ptr<benchmark_device_buffers> device_buffers = initialize_buffers(input, &conf, stream, mr);
@@ -317,10 +319,12 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
     pid_t pid = getpid();
 
     if (slurm_job_id != nullptr) {
-        printf("reading speed=%f B/s, parsing speed=%f B/s, size=%lu B, reading milliseconds=%f, parsing milliseconds=%f, PID=%d, SLURM_JOB_ID=%s\n",
+        printf("force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d,SLURM_JOB_ID=%s\n",
+               force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(size),
                reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid, slurm_job_id);
     } else {
-        printf("reading speed=%f B/s, parsing speed=%f B/s, size=%lu B, reading milliseconds=%f, parsing milliseconds=%f, PID=%d\n",
+        printf("force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d\n",
+               force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(size),
                reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid);
     }
 
@@ -426,6 +430,17 @@ KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input)
     return std::move(conf);
 }
 
+template <template <class> class Alloc>
+void read_cpu_to_gpu(benchmark_input &input, shared_ptr<benchmark_device_buffers> result, rmm::cuda_stream_view stream)
+{
+    thrust::host_vector<char, Alloc<char>> h_data(input.size);
+    input.source->host_read(input.offset, input.size, reinterpret_cast<uint8_t*>(h_data.data()));
+    //EOL detection only supported in non-GPU mode
+    if (input.eol == end_of_line::unknown)
+        input.eol = detect_eol(h_data);
+    cudaMemcpyAsync(result->input_buffer.data(), h_data.data(), input.size, cudaMemcpyHostToDevice, stream);
+}
+
 shared_ptr<benchmark_device_buffers>
 initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm::cuda_stream_view stream,
                    rmm::mr::device_memory_resource* mr)
@@ -463,19 +478,16 @@ initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm:
 #ifdef MEASURE_THROUGHPUT
     cudaEventRecord(start_reading, stream);
 #endif
-    if (!input.force_host_read && input.source->supports_device_read() &&
-        input.source->is_device_read_preferred(input.size)) {
+    if (input.try_gds) {
         if (input.eol == end_of_line::unknown)
             throw std::runtime_error("GPU read supported only with provided EOL");
         input.source->device_read_async(input.offset, input.size,
                                         reinterpret_cast<uint8_t*>(result->input_buffer.data()), stream);
     } else {
-        thrust::host_vector<char, thrust::cuda::experimental::pinned_allocator<char>> h_data(input.size);
-        input.source->host_read(input.offset, input.size, reinterpret_cast<uint8_t*>(h_data.data()));
-        //EOL detection only supported in non-GPU mode
-        if (input.eol == end_of_line::unknown)
-            input.eol = detect_eol(h_data);
-        cudaMemcpyAsync(result->input_buffer.data(), h_data.data(), input.size, cudaMemcpyHostToDevice, stream);
+        if (input.pinned_read)
+            read_cpu_to_gpu<thrust::cuda::experimental::pinned_allocator>(input, result, stream);
+        else
+            read_cpu_to_gpu<std::allocator>(input, result, stream);
     }
 #ifdef MEASURE_THROUGHPUT
     cudaEventRecord(end_reading, stream);
@@ -502,7 +514,8 @@ initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm:
 }
 
 benchmark_input
-get_input(const char* filename, size_t offset, size_t size, int input_count, end_of_line eol, bool force_host_read)
+get_input(const char* filename, size_t offset, size_t size, int input_count, end_of_line eol, bool force_host_read,
+          bool pinned_read)
 {
     size_t file_size = static_cast<size_t>(filesystem::file_size(filename));
     if (size == 0)
@@ -510,6 +523,8 @@ get_input(const char* filename, size_t offset, size_t size, int input_count, end
     size = min(size, file_size - offset);
 
     unique_ptr<cudf::io::datasource> source = cudf::io::datasource::create(filename, offset, size);
+
+    bool try_gds = !force_host_read && source->supports_device_read() && source->is_device_read_preferred(size);
 
     return benchmark_input
             {
@@ -519,6 +534,7 @@ get_input(const char* filename, size_t offset, size_t size, int input_count, end
                     input_count,
                     eol,
                     32,
-                    force_host_read
+                    try_gds,
+                    pinned_read
             };
 }

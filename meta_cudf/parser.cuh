@@ -9,6 +9,8 @@ enum class end_of_line {
 };
 
 
-cudf::io::table_with_metadata generate_example_metadata(const char* filename, size_t offset, size_t size, int count, end_of_line eol, bool force_host_read = false);
+cudf::io::table_with_metadata generate_example_metadata(const char* filename, size_t offset, size_t size, int count,
+                                                        end_of_line eol, bool force_host_read = false,
+                                                        bool pinned_read = true);
 
 #endif //META_CUDF_PARSER_CUH

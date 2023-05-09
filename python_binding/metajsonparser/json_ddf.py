@@ -57,7 +57,7 @@ def _get_meta_df(fname: str, force_host_read: bool) -> cudf.DataFrame:
 
 
 def read_json_ddf(
-        path, meta: Optional[cudf.DataFrame] = None, blocksize: Union[str, int] = "default", force_host_read: bool = False
+        path, meta: Optional[cudf.DataFrame] = None, blocksize: Union[str, int] = "default", force_host_read: bool = False, pinned_read: bool = True
 ) -> dd.DataFrame:
     """
     Read JSON files into a dask_cudf.DataFrame
@@ -106,7 +106,7 @@ def read_json_ddf(
         meta = _get_meta_df(filenames[0], force_host_read)
 
     if blocksize is None:
-        return _read_json_without_blocksize(path, meta, force_host_read)
+        return _read_json_without_blocksize(path, meta, force_host_read, pinned_read)
 
     group_sizes = []
     preprocess_tasks = []
@@ -136,13 +136,13 @@ def read_json_ddf(
     for fn, file_info in zip(filenames, file_infos_groups):
         blocks_metadata = _get_blocks_metadata(file_info)
         for byte_range, num_lines, eol in blocks_metadata:
-            dsk[(name, i)] = (apply, json_cudf.read_json, [fn, num_lines, byte_range, eol, force_host_read])
+            dsk[(name, i)] = (apply, json_cudf.read_json, [fn, num_lines, byte_range, eol, force_host_read, pinned_read])
             i += 1
 
     divisions = [None] * (len(dsk) + 1)
     return dd.core.new_dd_object(dsk, name, meta, divisions)
 
-def _read_json_without_blocksize(path, meta: cudf.DataFrame, force_host_read: bool):
+def _read_json_without_blocksize(path, meta: cudf.DataFrame, force_host_read: bool, pinned_read: bool):
     filenames = _resolve_filenames(path)
 
     preprocess_tasks = []
@@ -154,7 +154,7 @@ def _read_json_without_blocksize(path, meta: cudf.DataFrame, force_host_read: bo
 
     name = "read-json-ddf-" + tokenize(path)
 
-    graph = {(name, i): (apply, json_cudf.read_json, [fn, info["num_newlines"], None, "windows" if info["win_eol"] else "linux", force_host_read])
+    graph = {(name, i): (apply, json_cudf.read_json, [fn, info["num_newlines"], None, "windows" if info["win_eol"] else "linux", force_host_read, pinned_read])
              for
              i, (fn, info) in enumerate(zip(filenames, preprocessed_infos))}
 
