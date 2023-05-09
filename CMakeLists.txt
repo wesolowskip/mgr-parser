@@ -206,6 +206,9 @@ if (USE_LIBCUDF)
     target_compile_definitions(meta-cudf-parser-1 PRIVATE
                                HAVE_LIBCUDF=1
     )
+    target_compile_definitions(meta-cudf-parser-1 PRIVATE
+                                MEASURE_THROUGHPUT=1
+    )
 
     target_include_directories(meta-json-parser-benchmark PUBLIC
                                /usr/local/include

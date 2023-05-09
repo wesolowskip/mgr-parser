@@ -1,4 +1,6 @@
 //#include "opt1/meta_def.cuh"
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -21,6 +23,8 @@
 
 using namespace std;
 using namespace boost::mp11;
+
+cudaEvent_t start_reading, end_reading, start_parsing, end_parsing;
 
 namespace EndOfLine
 {
@@ -264,9 +268,19 @@ cudf::io::table_with_metadata
 generate_example_metadata(const char* filename, size_t offset, size_t size, int count, end_of_line eol,
                           bool force_host_read)
 {
-//	cudaStreamCreate(&stream);
+
+
     rmm::cuda_stream_view stream = rmm::cuda_stream_default;
     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
+#ifdef MEASURE_THROUGHPUT
+    cudaEventCreate(&start_reading);
+    cudaEventCreate(&end_reading);
+    cudaEventCreate(&start_parsing);
+    cudaEventCreate(&end_parsing);
+
+    cudaEventRecord(start_parsing, stream);
+#endif
 
     auto input = get_input(filename, offset, size, count, eol, force_host_read);
 
@@ -283,10 +297,41 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
 
     cudf::io::table_metadata metadata{column_names};
 
-    return cudf::io::table_with_metadata{
+    auto result = cudf::io::table_with_metadata{
             make_unique<cudf::table>(cudf_table),
             metadata
     };
+
+#ifdef MEASURE_THROUGHPUT
+
+    cudaEventRecord(end_parsing, stream);
+    cudaEventSynchronize(end_parsing);
+
+    float milliseconds = 0;
+
+    cudaEventElapsedTime(&milliseconds, start_reading, end_reading);
+    float reading_speed = milliseconds > 0 ? size * 1000. / milliseconds : 0;
+
+    cudaEventElapsedTime(&milliseconds, start_parsing, end_parsing);
+    float parsing_speed = milliseconds > 0 ? size * 1000. / milliseconds : 0;
+
+    const char* slurm_job_id = getenv("SLURM_JOB_ID");
+    pid_t pid = getpid();
+
+    if (slurm_job_id != nullptr) {
+        printf("Reading speed=%f B/s, parsing speed=%f B/s, SLURM_JOB_ID=%s, PID=%d\n", reading_speed, parsing_speed,
+               slurm_job_id, pid);
+    } else {
+        printf("Reading speed=%f B/s, parsing speed=%f B/s, PID=%d\n", reading_speed, parsing_speed, pid);
+    }
+
+    cudaEventDestroy(start_reading);
+    cudaEventDestroy(end_reading);
+    cudaEventDestroy(start_parsing);
+    cudaEventDestroy(end_parsing);
+#endif
+
+    return result;
 }
 
 void launch_kernel(shared_ptr<benchmark_device_buffers> device_buffers, rmm::cuda_stream_view stream,
@@ -416,6 +461,9 @@ initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm:
         result->host_output_buffers[i] = result->parser_output_buffers.m_d_outputs[i]->data();
     }
 
+#ifdef MEASURE_THROUGHPUT
+    cudaEventRecord(start_reading, stream);
+#endif
     if (!input.force_host_read && input.source->supports_device_read() &&
         input.source->is_device_read_preferred(input.size)) {
         if (input.eol == end_of_line::unknown)
@@ -430,6 +478,9 @@ initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm:
             input.eol = detect_eol(h_data);
         cudaMemcpyAsync(result->input_buffer.data(), h_data.data(), input.size, cudaMemcpyHostToDevice, stream);
     }
+#ifdef MEASURE_THROUGHPUT
+    cudaEventRecord(end_reading, stream);
+#endif
     cudaMemcpyAsync(result->output_buffers.data(), result->host_output_buffers.data(), sizeof(void*) * REQUEST_COUNT,
                     cudaMemcpyHostToDevice, stream);
 
