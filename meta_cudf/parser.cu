@@ -265,7 +265,7 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
                           bool force_host_read)
 {
 //	cudaStreamCreate(&stream);
-    rmm::cuda_stream stream;
+    rmm::cuda_stream_view stream = rmm::cuda_stream_default;
     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
     auto input = get_input(filename, offset, size, count, eol, force_host_read);

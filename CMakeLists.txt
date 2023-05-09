@@ -69,12 +69,6 @@ target_sources(lib-meta-json-parser INTERFACE
     include/meta_json_parser/kernel_context.cuh
     include/meta_json_parser/kernel_launch_configuration.cuh
     include/meta_json_parser/kernel_launcher.cuh
-    include/meta_json_parser/memory/allocator.h
-    include/meta_json_parser/memory/config.h
-    include/meta_json_parser/memory/config_transform.h
-    include/meta_json_parser/memory/pool.h
-    include/meta_json_parser/memory_configuration.h
-    include/meta_json_parser/memory_request.h
     include/meta_json_parser/meta_math.h
     include/meta_json_parser/meta_memory_manager.cuh
     include/meta_json_parser/meta_utility/is_base_of_template.h
