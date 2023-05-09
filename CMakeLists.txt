@@ -206,9 +206,6 @@ if (USE_LIBCUDF)
     target_compile_definitions(meta-cudf-parser-1 PRIVATE
                                HAVE_LIBCUDF=1
     )
-    target_compile_definitions(meta-cudf-parser-1 PRIVATE
-                                MEASURE_THROUGHPUT=1
-    )
 
     target_include_directories(meta-json-parser-benchmark PUBLIC
                                /usr/local/include
@@ -228,6 +225,13 @@ if (USE_LIBCUDF)
                                HAVE_LIBCUDF=1
     )
 
+endif()
+
+if (MEASURE_THROUGHPUT)
+    message("MEASURE_THROUGHPUT is true, compiling with throughput profiling")
+    target_compile_definitions(meta-cudf-parser-1 PRIVATE
+            MEASURE_THROUGHPUT=1
+            )
 endif()
 
 target_sources(meta-json-parser-benchmark PRIVATE

@@ -307,22 +307,21 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
     cudaEventRecord(end_parsing, stream);
     cudaEventSynchronize(end_parsing);
 
-    float milliseconds = 0;
-
-    cudaEventElapsedTime(&milliseconds, start_reading, end_reading);
-    float reading_speed = milliseconds > 0 ? size * 1000. / milliseconds : 0;
-
-    cudaEventElapsedTime(&milliseconds, start_parsing, end_parsing);
-    float parsing_speed = milliseconds > 0 ? size * 1000. / milliseconds : 0;
+    float reading_milliseconds = 0, parsing_milliseconds = 0;
+    cudaEventElapsedTime(&reading_milliseconds, start_reading, end_reading);
+    cudaEventElapsedTime(&parsing_milliseconds, start_parsing, end_parsing);
+    float reading_speed = reading_milliseconds > 0 ? input.size * 1000. / reading_milliseconds : HUGE_VALF;
+    float parsing_speed = parsing_milliseconds > 0 ? input.size * 1000. / parsing_milliseconds : HUGE_VALF;
 
     const char* slurm_job_id = getenv("SLURM_JOB_ID");
     pid_t pid = getpid();
 
     if (slurm_job_id != nullptr) {
-        printf("Reading speed=%f B/s, parsing speed=%f B/s, SLURM_JOB_ID=%s, PID=%d\n", reading_speed, parsing_speed,
-               slurm_job_id, pid);
+        printf("reading speed=%f B/s, parsing speed=%f B/s, size=%lu B, reading milliseconds=%f, parsing milliseconds=%f, PID=%d, SLURM_JOB_ID=%s\n",
+               reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid, slurm_job_id);
     } else {
-        printf("Reading speed=%f B/s, parsing speed=%f B/s, PID=%d\n", reading_speed, parsing_speed, pid);
+        printf("reading speed=%f B/s, parsing speed=%f B/s, size=%lu B, reading milliseconds=%f, parsing milliseconds=%f, PID=%d\n",
+               reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid);
     }
 
     cudaEventDestroy(start_reading);
