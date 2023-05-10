@@ -61,7 +61,7 @@ size_t get_size_to_read(const char* filename, size_t offset, size_t size)
     return min(size, file_size - offset);
 }
 
-block_data preprocess_block(const char* filename, size_t offset, size_t size, bool force_host_read)
+block_data preprocess_block_device(const char* filename, size_t offset, size_t size, bool force_host_read)
 {
     rmm::cuda_stream stream;
     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
@@ -73,12 +73,9 @@ block_data preprocess_block(const char* filename, size_t offset, size_t size, bo
     rmm::device_uvector<uint32_t> d_buffer((size + 3) / 4, stream, mr);
     d_buffer.set_element_to_zero_async(d_buffer.size() - 1, stream);
 
-    if (!force_host_read && source->supports_device_read() && source->is_device_read_preferred(size))
-    {
+    if (!force_host_read && source->supports_device_read() && source->is_device_read_preferred(size)) {
         source->device_read_async(offset, size, reinterpret_cast<uint8_t*>(d_buffer.data()), stream);
-    }
-    else
-    {
+    } else {
         thrust::host_vector<uint32_t, thrust::cuda::experimental::pinned_allocator<char>> h_data(size);
         source->host_read(offset, size, reinterpret_cast<uint8_t*>(h_data.data()));
         cudaMemcpyAsync(d_buffer.data(), h_data.data(), size, cudaMemcpyHostToDevice, stream.value());
@@ -99,4 +96,36 @@ block_data preprocess_block(const char* filename, size_t offset, size_t size, bo
     );
 
     return block_data{ret.get<0>(), ret.get<1>(), ret.get<2>()};
+}
+
+block_data preprocess_block_host(const char* filename, size_t offset, size_t size)
+{
+//    https://stackoverflow.com/questions/13808714/accessing-individual-characters-in-a-file-inefficient-c
+    size = get_size_to_read(filename, offset, size);
+
+    FILE* infile = fopen(filename, "r");
+    fseek(infile, offset, SEEK_SET);
+
+    static char buffer[4096];
+    size_t num_read;
+    ssize_t total_read = 0;
+
+    block_data result{-1, 0, false};
+
+    while (total_read < size && 0 < (num_read = fread(buffer, 1, sizeof(buffer), infile))) {
+        for (int i = 0; i < num_read && total_read < size; ++i, ++total_read) {
+            if (buffer[i] == '\n') {
+                result.last_eol = total_read;
+                ++result.num_newlines;
+            } else if (buffer[i] == '\r') {
+                result.win_eol = true;
+            }
+        }
+    }
+
+    fclose(infile);
+
+    result.last_eol += static_cast<ssize_t>(offset);
+
+    return result;
 }

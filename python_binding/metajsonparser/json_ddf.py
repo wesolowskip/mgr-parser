@@ -15,9 +15,12 @@ from metajsonparser._lib import json_cudf
 
 @delayed
 def _preprocess_block_pickable(
-        fname: str, byte_range: tuple[int, int], force_host_read: bool
+        fname: str, byte_range: tuple[int, int], force_gpu_preprocess: bool, force_host_read: bool
 ) -> dict:
-    return json_cudf.preprocess_block_wrapper(fname, byte_range, force_host_read)
+    if force_gpu_preprocess:
+        return json_cudf.preprocess_block_device_wrapper(fname, byte_range, force_host_read)
+    else:
+        return json_cudf.preprocess_block_host_wrapper(fname, byte_range)
 
 def _resolve_filenames(path) -> list[str]:
     if isinstance(path, list):
@@ -39,11 +42,12 @@ def _get_blocks_metadata(preprocessed_blocks_data: Iterable[dict]) -> list[tuple
     result = []
     end = 0
     for bd in preprocessed_blocks_data:
-        start = end
-        end = bd["last_eol"] + 1
-        count = end - start
-        if count:
-            result.append(((start, count), bd["num_newlines"], "windows" if bd["win_eol"] else "linux"))
+        if bd["num_newlines"]:
+            start = end
+            end = bd["last_eol"] + 1
+            count = end - start
+            if count:
+                result.append(((start, count), bd["num_newlines"], "windows" if bd["win_eol"] else "linux"))
     return result
 
 def _get_meta_df(fname: str, force_host_read: bool) -> cudf.DataFrame:
@@ -57,7 +61,8 @@ def _get_meta_df(fname: str, force_host_read: bool) -> cudf.DataFrame:
 
 
 def read_json_ddf(
-        path, meta: Optional[cudf.DataFrame] = None, blocksize: Union[str, int] = "default", force_host_read: bool = False, pinned_read: bool = True
+        path, meta: Optional[cudf.DataFrame] = None, blocksize: Union[str, int] = "default",
+        force_gpu_preprocess: bool = False, force_host_read: bool = False, pinned_read: bool = True
 ) -> dd.DataFrame:
     """
     Read JSON files into a dask_cudf.DataFrame
@@ -77,10 +82,18 @@ def read_json_ddf(
         A path to a file (a str, pathlib.Path, or
         py._path.local.LocalPath)
     meta : cudf.DataFrame
-        If None, schema for the DataFrame will be inferred
+        A schema for the resulting DataFrame. If None, schema for the DataFrame will be inferred
     blocksize : int or str, default "256 MiB"
         The target task partition size. If `None`, a single block
         is used for each file.
+    force_gpu_preprocess : bool
+        By default the data is preprocessed (counting lines, dividing into partitions) on CPU.
+        This setting changes that to GPU
+    force_host_read : bool
+        Applicable for every memory->GPU transfer. Setting this to `True` changes every such a transfer to
+        memory->CPU->GPU (i.e., no GDS is used)
+    pinned_read : bool
+        Applicable for memory->CPU->GPU transfers. If `True`, pinned allocation is used (cudaMallocHost)
 
     Examples
     --------
@@ -106,7 +119,7 @@ def read_json_ddf(
         meta = _get_meta_df(filenames[0], force_host_read)
 
     if blocksize is None:
-        return _read_json_without_blocksize(path, meta, force_host_read, pinned_read)
+        return _read_json_without_blocksize(path, meta, force_gpu_preprocess, force_host_read, pinned_read)
 
     group_sizes = []
     preprocess_tasks = []
@@ -118,7 +131,7 @@ def read_json_ddf(
                 start,
                 blocksize,
             )
-            preprocess_tasks.append(_preprocess_block_pickable(fn, byte_range, force_host_read))
+            preprocess_tasks.append(_preprocess_block_pickable(fn, byte_range, force_gpu_preprocess, force_host_read))
         group_sizes.append((size + blocksize - 1) // blocksize)
 
     assert sum(group_sizes) == len(preprocess_tasks)
@@ -142,13 +155,15 @@ def read_json_ddf(
     divisions = [None] * (len(dsk) + 1)
     return dd.core.new_dd_object(dsk, name, meta, divisions)
 
-def _read_json_without_blocksize(path, meta: cudf.DataFrame, force_host_read: bool, pinned_read: bool):
+def _read_json_without_blocksize(
+        path, meta: cudf.DataFrame, force_gpu_preprocess: bool, force_host_read: bool, pinned_read: bool
+):
     filenames = _resolve_filenames(path)
 
     preprocess_tasks = []
 
     for fn in filenames:
-        preprocess_tasks.append(_preprocess_block_pickable(fn, (0, 0), force_host_read))
+        preprocess_tasks.append(_preprocess_block_pickable(fn, (0, 0), force_gpu_preprocess, force_host_read))
 
     preprocessed_infos: list[dict] = compute(*preprocess_tasks)
 

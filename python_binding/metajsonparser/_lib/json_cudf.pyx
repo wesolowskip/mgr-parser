@@ -53,13 +53,23 @@ cdef extern from "dask_integration.cuh":
         ssize_t last_eol
         ssize_t num_newlines
         bint win_eol
-    block_data preprocess_block(const char * filename, size_t offset, size_t size, bint force_host_read)
+    block_data preprocess_block_device(const char * filename, size_t offset, size_t size, bint force_host_read)
+    block_data preprocess_block_host(const char * filename, size_t offset, size_t size)
 
-def preprocess_block_wrapper(
+def preprocess_block_device_wrapper(
         fname: str, byte_range: tuple[int, int], force_host_read: bool
 ) -> dict:
     py_byte_string = fname.encode('ASCII')
     cdef const char * c_string = py_byte_string
     cdef size_t c_offset = byte_range[0]
     cdef size_t c_size = byte_range[1]
-    return preprocess_block(c_string, c_offset, c_size, force_host_read)
+    return preprocess_block_device(c_string, c_offset, c_size, force_host_read)
+
+def preprocess_block_host_wrapper(
+        fname: str, byte_range: tuple[int, int]
+) -> dict:
+    py_byte_string = fname.encode('ASCII')
+    cdef const char * c_string = py_byte_string
+    cdef size_t c_offset = byte_range[0]
+    cdef size_t c_size = byte_range[1]
+    return preprocess_block_host(c_string, c_offset, c_size)

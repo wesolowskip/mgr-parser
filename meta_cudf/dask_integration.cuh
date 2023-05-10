@@ -9,6 +9,7 @@ struct block_data
     bool win_eol;
 };
 
-block_data preprocess_block(const char* filename, size_t offset, size_t size = 0, bool force_host_read = false);
+block_data preprocess_block_host(const char* filename, size_t offset, size_t size = 0);
+block_data preprocess_block_device(const char* filename, size_t offset, size_t size = 0, bool force_host_read = false);
 
 #endif //META_JSON_PARSER_DASK_INTEGRATION_CUH
