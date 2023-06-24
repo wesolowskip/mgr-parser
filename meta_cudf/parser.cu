@@ -4,10 +4,12 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <typeinfo>
 
 #include <boost/mp11.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/types.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_scalar.hpp>
 #include <thrust/logical.h>
@@ -274,6 +276,9 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
 
     rmm::cuda_stream_view stream = rmm::cuda_stream_default;
     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+//#ifdef NDEBUG
+    std::cout << "Detected memory resource " << typeid(*mr).name() << std::endl;
+//#endif
 
 #ifdef MEASURE_THROUGHPUT
     cudaEventCreate(&start_reading);
