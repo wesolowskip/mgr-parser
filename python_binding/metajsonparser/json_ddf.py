@@ -55,7 +55,7 @@ def _get_meta_df(fname: str, force_host_read: bool) -> cudf.DataFrame:
         line = next(iter(f))
         byte_range = (0, len(line))
         win_eol = len(line) >= 2 and line[-2] == '\r'
-    meta = json_cudf.read_json(fname, 1, byte_range, win_eol, force_host_read)
+    meta = json_cudf.read_json(fname, 1, byte_range, "windows" if win_eol else "linux", force_host_read)
     meta.drop(meta.index, inplace=True)
     return meta
 
