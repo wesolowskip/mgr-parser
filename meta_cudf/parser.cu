@@ -276,7 +276,7 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
 
     rmm::cuda_stream_view stream = rmm::cuda_stream_default;
     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
-#ifdef NDEBUG
+#ifndef NDEBUG
     std::cout << "Detected memory resource " << typeid(*mr).name() << std::endl;
 #endif
 
