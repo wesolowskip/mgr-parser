@@ -24,7 +24,7 @@ def _preprocess_block_pickable(
 
 def _resolve_filenames(path) -> list[str]:
     if isinstance(path, list):
-        filenames = [str(x) for x in path]
+        filenames = path
     elif isinstance(path, str):
         filenames = sorted(glob(path))
     elif hasattr(path, "__fspath__"):
