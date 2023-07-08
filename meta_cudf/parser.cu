@@ -324,12 +324,12 @@ generate_example_metadata(const char* filename, size_t offset, size_t size, int 
     pid_t pid = getpid();
 
     if (slurm_job_id != nullptr) {
-        printf("force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d,SLURM_JOB_ID=%s\n",
-               force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(input.size),
+        printf("try_gds=%d,force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d,SLURM_JOB_ID=%s\n",
+               input.try_gds, force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(input.size),
                reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid, slurm_job_id);
     } else {
-        printf("force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d\n",
-               force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(input.size),
+        printf("try_gds=%d,force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d\n",
+               input.try_gds, force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(input.size),
                reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid);
     }
 
