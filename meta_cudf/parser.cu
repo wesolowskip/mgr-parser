@@ -486,7 +486,7 @@ initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm:
     if (input.try_gds) {
         if (input.eol == end_of_line::unknown)
             throw std::runtime_error("GPU read supported only with provided EOL");
-        input.source->device_read_async(input.offset, input.size,
+        input.source->device_read(input.offset, input.size,
                                         reinterpret_cast<uint8_t*>(result->input_buffer.data()), stream);
     } else {
         if (input.pinned_read)
