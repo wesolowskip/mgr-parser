@@ -47,7 +47,7 @@ def _get_blocks_metadata(preprocessed_blocks_data: Iterable[dict]) -> list[tuple
             end = bd["last_eol"] + 1
             count = end - start
             if count:
-                result.append(((start, count), bd["num_newlines"], "windows" if bd["win_eol"] else "linux"))
+                result.append(((start, count), bd["num_newlines"], "windows" if bd["win_eol"] else "unix"))
     return result
 
 def _get_meta_df(fname: str, force_host_read: bool) -> cudf.DataFrame:
@@ -169,7 +169,7 @@ def _read_json_without_blocksize(
 
     name = "read-json-ddf-" + tokenize(path)
 
-    graph = {(name, i): (apply, json_cudf.read_json, [fn, info["num_newlines"], None, "windows" if info["win_eol"] else "linux", force_host_read, pinned_read])
+    graph = {(name, i): (apply, json_cudf.read_json, [fn, info["num_newlines"], None, "windows" if info["win_eol"] else "unix", force_host_read, pinned_read])
              for
              i, (fn, info) in enumerate(zip(filenames, preprocessed_infos))}
 
