@@ -465,3 +465,7 @@ MigrationBackup/
 
 # CLion
 .idea
+
+.run/
+.runprod
+.vscode/
