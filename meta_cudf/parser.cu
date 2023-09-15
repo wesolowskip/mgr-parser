@@ -1,27 +1,32 @@
 //#include "opt1/meta_def.cuh"
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <memory>
+#include <typeinfo>
 
 #include <boost/mp11.hpp>
+#include <cudf/io/datasource.hpp>
 #include <cudf/io/types.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/device_buffer.hpp>
+#include <rmm/device_scalar.hpp>
 #include <thrust/logical.h>
-#include <iomanip>
+#include <thrust/host_vector.h>
+#include <thrust/system/cuda/experimental/pinned_allocator.h>
 #include <meta_json_parser/parser_output_device.cuh>
 #include <meta_json_parser/parser_kernel.cuh>
 #include <meta_json_parser/action/jstring.cuh>
 
 #include <meta_def.cuh>
 
+#include "parser.cuh"
+
 using namespace std;
 using namespace boost::mp11;
 
-cudaStream_t stream;
-
-enum class end_of_line {
-    unknown,
-    uniks, //< LF, or "\n": end-of-line convention used by Unix
-    win   //< CRLF, or "\r\n": end-of-line convention used by MS Windows
-};
+cudaEvent_t start_reading, end_reading, start_parsing, end_parsing;
 
 namespace EndOfLine
 {
@@ -88,7 +93,8 @@ struct LineEndingHelper<EndOfLine::Win>
 template<class EndOfLineT>
 struct IsNewLine
 {
-    __device__ __forceinline__ bool operator()(const cub::KeyValuePair<ptrdiff_t, uint32_t> c) const {
+    __device__ __forceinline__ bool operator()(const cub::KeyValuePair<ptrdiff_t, uint32_t> c) const
+    {
         return LineEndingHelper<EndOfLineT>::is_newline(c.value);
     }
 };
@@ -108,10 +114,10 @@ public:
 #if (THRUST_VERSION >= 100700)
     // Use Thrust's iterator categories so we can use these iterators in Thrust 1.7 (or newer) methods
     typedef typename thrust::detail::iterator_facade_category<
-        thrust::any_system_tag,
-        thrust::random_access_traversal_tag,
-        value_type,
-        reference
+            thrust::any_system_tag,
+            thrust::random_access_traversal_tag,
+            value_type,
+            reference
     >::type iterator_category;                                        ///< The iterator category
 #else
     typedef std::random_access_iterator_tag     iterator_category;      ///< The iterator category
@@ -119,7 +125,7 @@ public:
 
 private:
 
-    InputIndex*  itr;
+    InputIndex* itr;
 
 public:
 
@@ -127,7 +133,7 @@ public:
     __host__ __device__ __forceinline__ OutputIndicesIterator(InputIndex* itr) : itr(itr) {}
 
     /// Assignment operator
-    __device__ __forceinline__ self_type& operator=(const value_type &val)
+    __device__ __forceinline__ self_type& operator=(const value_type& val)
     {
         int inner_offset = LineEndingHelper<EndOfLineT>::eol_length();
         //undefined behavior for 2 byte jsons. e.g. \n[]\n or \n{}\n
@@ -164,92 +170,131 @@ public:
 
 struct benchmark_input
 {
-    vector<char> data;
+    unique_ptr<cudf::io::datasource> source;
+    size_t offset;
+    size_t size;
     int count;
     end_of_line eol;
     int bytes_per_string;
+    bool try_gds;
+    bool pinned_read;
 };
 
 struct benchmark_device_buffers
 {
     ParserOutputDevice<BaseAction> parser_output_buffers;
-    char* readonly_buffers;
-    char* input_buffer;
-    InputIndex* indices_buffer;
-    ParsingError* err_buffer;
-    void** output_buffers;
+    rmm::device_uvector<char> readonly_buffers;
+    rmm::device_uvector<char> input_buffer;
+    rmm::device_uvector<InputIndex> indices_buffer;
+    rmm::device_uvector<ParsingError> err_buffer;
+    rmm::device_uvector<void*> output_buffers;
     int count;
 
-    vector<void*> host_output_buffers;
+    thrust::host_vector<void*, thrust::cuda::experimental::pinned_allocator<void*>> host_output_buffers;
+
+    benchmark_device_buffers(ParserOutputDevice<BaseAction>&& parser_output_buffers,
+                             rmm::device_uvector<char>&& readonly_buffers,
+                             rmm::device_uvector<char>&& input_buffer, rmm::device_uvector<InputIndex> indices_buffer,
+                             rmm::device_uvector<ParsingError>&& err_buffer, rmm::device_uvector<void*> output_buffers,
+                             vector<void*> host_output_buffers, int count) :
+            parser_output_buffers(std::move(parser_output_buffers)), readonly_buffers(std::move(readonly_buffers)),
+            input_buffer(std::move(input_buffer)), indices_buffer(std::move(indices_buffer)),
+            err_buffer(std::move(err_buffer)),
+            output_buffers(std::move(output_buffers)), host_output_buffers(std::move(host_output_buffers)),
+            count(count)
+    {}
 };
 
-benchmark_input get_input(const char* filename, int input_count);
+benchmark_input
+get_input(const char* filename, size_t offset, size_t size, int input_count, end_of_line eol, bool force_host_read,
+          bool pinned_read);
+
 KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input);
-benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf);
+
+shared_ptr<benchmark_device_buffers>
+initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm::cuda_stream_view stream,
+                   rmm::mr::device_memory_resource* mr);
+
 end_of_line detect_eol(benchmark_input& input);
-void launch_kernel(benchmark_device_buffers& device_buffers);
+
+void launch_kernel(shared_ptr<benchmark_device_buffers> device_buffers, rmm::cuda_stream_view stream,
+                   rmm::mr::device_memory_resource* mr);
 
 template<class EndOfLineT>
-void find_newlines(char* d_input, size_t input_size, InputIndex* d_indices, int count)
+void find_newlines(rmm::device_uvector<char>& d_input, size_t input_size, rmm::device_uvector<InputIndex>& d_indices,
+                   int count, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr)
 {
-    InputIndex just_zero = 0;
-    cudaMemcpyAsync(d_indices, &just_zero, sizeof(InputIndex), cudaMemcpyHostToDevice, stream);  //Skopiowanie pierwszego indeksu ograniczającego linie, czyli 0
+    d_indices.set_element_to_zero_async(0, stream); //Skopiowanie pierwszego indeksu ograniczającego linie, czyli 0
 
-    cub::ArgIndexInputIterator<uint32_t*> arg_iter(reinterpret_cast<uint32_t*>(d_input));
-    OutputIndicesIterator<EndOfLineT> out_iter(d_indices + 1); // +1, we need to add 0 at index 0
+    cub::ArgIndexInputIterator<uint32_t*> arg_iter(reinterpret_cast<uint32_t*>(d_input.data()));
+    OutputIndicesIterator<EndOfLineT> out_iter(d_indices.data() + 1); // +1, we need to add 0 at index 0
 
-    int* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-    int* d_num_selected;
-    cudaMalloc(&d_num_selected, sizeof(int));
+    auto d_num_selected = rmm::device_scalar<int>(stream, mr);
 
     cub::DeviceSelect::If(
-        d_temp_storage,
-        temp_storage_bytes,
-        arg_iter,
-        out_iter,
-        d_num_selected,
-        (input_size + 3) / 4,
-        IsNewLine<EndOfLineT>(),
-        stream
+            nullptr,
+            temp_storage_bytes,
+            arg_iter,
+            out_iter,
+            d_num_selected.data(),
+            (input_size + 3) / 4,
+            IsNewLine<EndOfLineT>(),
+            stream
     );
 
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, mr);
 
     cub::DeviceSelect::If(
-        d_temp_storage,
-        temp_storage_bytes,
-        arg_iter,
-        out_iter,
-        d_num_selected,
-        (input_size + 3) / 4,
-        IsNewLine<EndOfLineT>(),
-        stream
+            d_temp_storage.data(),
+            temp_storage_bytes,
+            arg_iter,
+            out_iter,
+            d_num_selected.data(),
+            (input_size + 3) / 4,
+            IsNewLine<EndOfLineT>(),
+            stream
     );
 
+#ifndef NDEBUG
     // Following lines could be commented out as it is only validation step
     cudaStreamSynchronize(stream);
     int h_num_selected = -1;
-    cudaMemcpy(&h_num_selected, d_num_selected, sizeof(int), cudaMemcpyDeviceToHost);
-    if (h_num_selected != count)
-    {
+    cudaMemcpy(&h_num_selected, d_num_selected.data(), sizeof(int), cudaMemcpyDeviceToHost);
+    if (h_num_selected != count) {
         cout << "Found " << h_num_selected << " new lines instead of declared " << count << ".\n";
         throw runtime_error("Invalid number of new lines.");
     }
-
-    cudaFree(d_temp_storage);
-    cudaFree(d_num_selected);
+#endif
 }
 
-cudf::io::table_with_metadata generate_example_metadata(const char* filename, int count) {
-	cudaStreamCreate(&stream);
+cudf::io::table_with_metadata
+generate_example_metadata(const char* filename, size_t offset, size_t size, int count, end_of_line eol,
+                          bool force_host_read, bool pinned_read)
+{
 
-    auto input = get_input(filename, count);
+
+    rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+    rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+#ifndef NDEBUG
+    std::cout << "Detected memory resource " << typeid(*mr).name() << std::endl;
+#endif
+
+#ifdef MEASURE_THROUGHPUT
+    cudaEventCreate(&start_reading);
+    cudaEventCreate(&end_reading);
+    cudaEventCreate(&start_parsing);
+    cudaEventCreate(&end_parsing);
+
+    cudaEventRecord(start_parsing, stream);
+#endif
+
+    auto input = get_input(filename, offset, size, count, eol, force_host_read, pinned_read);
 
     KernelLaunchConfiguration conf = prepare_dynamic_config(input);
-    benchmark_device_buffers device_buffers = initialize_buffers(input, &conf);
-    launch_kernel(device_buffers);
-    auto cudf_table  = device_buffers.parser_output_buffers.ToCudf(stream);
+    shared_ptr<benchmark_device_buffers> device_buffers = initialize_buffers(input, &conf, stream, mr);
+    launch_kernel(device_buffers, stream, mr);
+    auto cudf_table = device_buffers->parser_output_buffers.ToCudf(stream, mr);
 
     vector<cudf::io::column_name_info> column_names(cudf_table.num_columns());
 
@@ -259,13 +304,46 @@ cudf::io::table_with_metadata generate_example_metadata(const char* filename, in
 
     cudf::io::table_metadata metadata{column_names};
 
-    return cudf::io::table_with_metadata{
-        make_unique<cudf::table>(cudf_table),
-        metadata
+    auto result = cudf::io::table_with_metadata{
+            make_unique<cudf::table>(cudf_table),
+            metadata
     };
+
+#ifdef MEASURE_THROUGHPUT
+
+    cudaEventRecord(end_parsing, stream);
+    cudaEventSynchronize(end_parsing);
+
+    float reading_milliseconds = 0, parsing_milliseconds = 0;
+    cudaEventElapsedTime(&reading_milliseconds, start_reading, end_reading);
+    cudaEventElapsedTime(&parsing_milliseconds, start_parsing, end_parsing);
+    float reading_speed = reading_milliseconds > 0 ? input.size * 1000. / reading_milliseconds : HUGE_VALF;
+    float parsing_speed = parsing_milliseconds > 0 ? input.size * 1000. / parsing_milliseconds : HUGE_VALF;
+
+    const char* slurm_job_id = getenv("SLURM_JOB_ID");
+    pid_t pid = getpid();
+
+    if (slurm_job_id != nullptr) {
+        printf("try_gds=%d,force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d,SLURM_JOB_ID=%s\n",
+               input.try_gds, force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(input.size),
+               reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid, slurm_job_id);
+    } else {
+        printf("try_gds=%d,force_host_read=%d,source_supports_GDS=%d,GDS_preferred=%d,reading_speed=%f B/s,parsing_speed=%f B/s,size=%lu B,reading_milliseconds=%f,parsing_milliseconds=%f,PID=%d\n",
+               input.try_gds, force_host_read, input.source->supports_device_read(), input.source->is_device_read_preferred(input.size),
+               reading_speed, parsing_speed, input.size, reading_milliseconds, parsing_milliseconds, pid);
+    }
+
+    cudaEventDestroy(start_reading);
+    cudaEventDestroy(end_reading);
+    cudaEventDestroy(start_parsing);
+    cudaEventDestroy(end_parsing);
+#endif
+
+    return result;
 }
 
-void launch_kernel(benchmark_device_buffers& device_buffers)
+void launch_kernel(shared_ptr<benchmark_device_buffers> device_buffers, rmm::cuda_stream_view stream,
+                   rmm::mr::device_memory_resource* mr)
 {
     using GroupSize = WorkGroupSize;
     constexpr int GROUP_SIZE = WorkGroupSize::value;
@@ -276,29 +354,30 @@ void launch_kernel(benchmark_device_buffers& device_buffers)
     using PC = ParserConfiguration<RT, BaseAction>;
     using PK = ParserKernel<PC>;
 
-    PK pk(device_buffers.parser_output_buffers.m_launch_config, stream);
+    PK pk(device_buffers->parser_output_buffers.m_launch_config, stream, mr);
 
     pk.Run(
-        device_buffers.input_buffer,
-        device_buffers.indices_buffer,
-        device_buffers.err_buffer,
-        device_buffers.output_buffers,
-        device_buffers.count,
-        device_buffers.host_output_buffers.data()
+            device_buffers->input_buffer.data(),
+            device_buffers->indices_buffer.data(),
+            device_buffers->err_buffer.data(),
+            device_buffers->output_buffers.data(),
+            device_buffers->count,
+            device_buffers->host_output_buffers.data()
     );
 }
 
-end_of_line detect_eol(benchmark_input& input)
+template <class Alloc>
+end_of_line detect_eol(const thrust::host_vector<char, Alloc>& input)
 {
-    auto found = std::find_if(input.data.begin(), input.data.end(), [](char& c) {
+    auto found = std::find_if(input.cbegin(), input.cend(), [](const char& c) {
         return c == '\r' || c == '\n';
     });
-    if (found == input.data.end())
+    if (found == input.cend())
         return end_of_line::unknown;
     if (*found == '\n')
         return end_of_line::uniks;
     // *found == '\r'
-    if ((found + 1) == input.data.end() || *(found + 1) != '\n')
+    if ((found + 1) == input.cend() || *(found + 1) != '\n')
         return end_of_line::unknown;
     return end_of_line::win;
 }
@@ -308,37 +387,37 @@ KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input)
     KernelLaunchConfiguration conf;
 
     using DynamicStringActions = mp_copy_if_q<
-        ActionIterator<BaseAction>,
-        mp_bind<
-            mp_similar,
-            JStringDynamicCopy<void>,
-            _1
-        >
+            ActionIterator<BaseAction>,
+            mp_bind<
+                    mp_similar,
+                    JStringDynamicCopy<void>,
+                    _1
+            >
     >;
 
     using DynamicStringActionsV2 = mp_copy_if_q<
-        ActionIterator<BaseAction>,
-        mp_bind<
-            mp_similar,
-            JStringDynamicCopyV2<void>,
-            _1
-        >
+            ActionIterator<BaseAction>,
+            mp_bind<
+                    mp_similar,
+                    JStringDynamicCopyV2<void>,
+                    _1
+            >
     >;
 
     using DynamicStringActionsV3 = mp_copy_if_q<
-        ActionIterator<BaseAction>,
-        mp_bind<
-            mp_similar,
-            JStringDynamicCopyV3<void>,
-            _1
-        >
+            ActionIterator<BaseAction>,
+            mp_bind<
+                    mp_similar,
+                    JStringDynamicCopyV3<void>,
+                    _1
+            >
     >;
 
     mp_for_each<
-        mp_append<
-            DynamicStringActions,
-            DynamicStringActionsV2
-        >
+            mp_append<
+                    DynamicStringActions,
+                    DynamicStringActionsV2
+            >
     >([&conf, &input](auto a) {
         using Action = decltype(a);
         using Tag = typename Action::DynamicStringRequestTag;
@@ -356,7 +435,20 @@ KernelLaunchConfiguration prepare_dynamic_config(benchmark_input& input)
     return std::move(conf);
 }
 
-benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf)
+template <template <class> class Alloc>
+void read_cpu_to_gpu(benchmark_input &input, shared_ptr<benchmark_device_buffers> result, rmm::cuda_stream_view stream)
+{
+    thrust::host_vector<char, Alloc<char>> h_data(input.size);
+    input.source->host_read(input.offset, input.size, reinterpret_cast<uint8_t*>(h_data.data()));
+    //EOL detection only supported in non-GPU mode
+    if (input.eol == end_of_line::unknown)
+        input.eol = detect_eol(h_data);
+    cudaMemcpyAsync(result->input_buffer.data(), h_data.data(), input.size, cudaMemcpyHostToDevice, stream);
+}
+
+shared_ptr<benchmark_device_buffers>
+initialize_buffers(benchmark_input& input, KernelLaunchConfiguration* conf, rmm::cuda_stream_view stream,
+                   rmm::mr::device_memory_resource* mr)
 {
     using GroupSize = WorkGroupSize;
     constexpr int GROUP_SIZE = WorkGroupSize::value;
@@ -371,37 +463,51 @@ benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunch
     using OM = typename KC::OM;
     constexpr size_t REQUEST_COUNT = boost::mp11::mp_size<typename OutputConfiguration<BaseAction>::RequestList>::value;
 
-    benchmark_device_buffers result;
-    result.count = input.count;
-    result.parser_output_buffers = ParserOutputDevice<BaseAction>(conf, result.count);
-    cudaMalloc(&result.readonly_buffers, sizeof(BUF));
-    cudaMalloc(&result.input_buffer, input.data.size());   //Wejsciowy plik trzymany w pamieci GPU
-    cudaMalloc(&result.indices_buffer, sizeof(InputIndex) * (input.count + 1));   //InputIndex to uint32, tu alokujemy indeksy na newliny
-    cudaMalloc(&result.err_buffer, sizeof(ParsingError) * input.count);
-    cudaMalloc(&result.output_buffers, sizeof(void*) * REQUEST_COUNT);   //Wyjsciowy output
 
-    result.host_output_buffers = vector<void*>(REQUEST_COUNT);
+    auto result = make_shared<benchmark_device_buffers>(
+            ParserOutputDevice<BaseAction>(conf, input.count, stream, mr),
+            rmm::device_uvector<char>(sizeof(BUF), stream, mr),
+            rmm::device_uvector<char>(input.size, stream, mr),
+            rmm::device_uvector<InputIndex>(input.count + 1, stream, mr),
+            rmm::device_uvector<ParsingError>(input.count, stream, mr),
+            rmm::device_uvector<void*>(REQUEST_COUNT, stream, mr),
+            vector<void*>(REQUEST_COUNT),
+            input.count
+    );
+
     for (int i = 0; i < REQUEST_COUNT; ++i)
     {
-        result.host_output_buffers[i] = result.parser_output_buffers.m_d_outputs[i].data().get();
+        result->host_output_buffers[i] = result->parser_output_buffers.m_d_outputs[i]->data();
     }
 
-    cudaMemcpyAsync(result.input_buffer, input.data.data(), input.data.size(), cudaMemcpyHostToDevice, stream);
-    cudaMemcpyAsync(result.output_buffers, result.host_output_buffers.data(), sizeof(void*) * REQUEST_COUNT, cudaMemcpyHostToDevice, stream);
+#ifdef MEASURE_THROUGHPUT
+    cudaEventRecord(start_reading, stream);
+#endif
+    if (input.try_gds) {
+        if (input.eol == end_of_line::unknown)
+            throw std::runtime_error("GPU read supported only with provided EOL");
+        input.source->device_read(input.offset, input.size,
+                                        reinterpret_cast<uint8_t*>(result->input_buffer.data()), stream);
+    } else {
+        if (input.pinned_read)
+            read_cpu_to_gpu<thrust::cuda::experimental::pinned_allocator>(input, result, stream);
+        else
+            read_cpu_to_gpu<std::allocator>(input, result, stream);
+    }
+#ifdef MEASURE_THROUGHPUT
+    cudaEventRecord(end_reading, stream);
+#endif
+    cudaMemcpyAsync(result->output_buffers.data(), result->host_output_buffers.data(), sizeof(void*) * REQUEST_COUNT,
+                    cudaMemcpyHostToDevice, stream);
 
-    //End of line might be passed as an option to the program
-    if (input.eol == end_of_line::unknown)
-        input.eol = detect_eol(input);
-
-    switch (input.eol)
-    {
+    switch (input.eol) {
         case end_of_line::uniks:
             find_newlines<EndOfLine::Unix>
-                (result.input_buffer, input.data.size(), result.indices_buffer, input.count);
+                    (result->input_buffer, input.size, result->indices_buffer, input.count, stream, mr);
             break;
         case end_of_line::win:
             find_newlines<EndOfLine::Win>
-                (result.input_buffer, input.data.size(), result.indices_buffer, input.count);
+                    (result->input_buffer, input.size, result->indices_buffer, input.count, stream, mr);
             break;
         case end_of_line::unknown:
         default:
@@ -409,34 +515,31 @@ benchmark_device_buffers initialize_buffers(benchmark_input& input, KernelLaunch
             throw std::runtime_error("Unknown end of line character");
     }
 
-//    auto test = vector<uint32_t>(2001);
-//    cudaMemcpy(test.data(), result.indices_buffer, 2001, cudaMemcpyDeviceToHost);
-
-    //Dzieki sprytnej implementacji iteratora, result.indices_buffer zawiera indeksy charakterow a nie uint32_t,
-    //dokladnie sa to indeksy nowych linii
-
     return result;
 }
 
-benchmark_input get_input(const char* filename, int input_count)
+benchmark_input
+get_input(const char* filename, size_t offset, size_t size, int input_count, end_of_line eol, bool force_host_read,
+          bool pinned_read)
 {
-    ifstream file(filename, ifstream::ate | ifstream::binary);
-    if (!file.good())
-    {
-        cout << "Error reading file \"" << filename << "\".\n";
-        throw std::runtime_error("Error reading file.");
-    }
-    vector<char> data(file.tellg());
-    file.seekg(0);
-    file.read(data.data(), static_cast<streamsize>(data.size()));
+    size_t file_size = static_cast<size_t>(filesystem::file_size(filename));
+    if (size == 0)
+        size = file_size;
+    size = min(size, file_size - offset);
+
+    unique_ptr<cudf::io::datasource> source = cudf::io::datasource::create(filename, offset, size);
+
+    bool try_gds = !force_host_read && source->supports_device_read() && source->is_device_read_preferred(size);
 
     return benchmark_input
-        {
-            std::move(data),
-            input_count,
-            end_of_line::unknown,
-            32
-        };
+            {
+                    std::move(source),
+                    offset,
+                    size,
+                    input_count,
+                    eol,
+                    32,
+                    try_gds,
+                    pinned_read
+            };
 }
-
-

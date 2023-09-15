@@ -29,7 +29,7 @@ from setuptools.extension import Extension
 
 
 
-cython_files = ["*.pyx"]
+cython_files = ["metajsonparser/_lib/json_cudf.pyx"]
 
 
 def get_cuda_version_from_header(cuda_include_dir, delimeter=""):
@@ -200,9 +200,9 @@ setup(
     # Include the separately-compiled shared library
     setup_requires=["cython", "protobuf"],
     ext_modules=extensions,
-    packages=find_packages(include=["cudf", "cudf.*"]),
+    packages=find_packages(include=["metajsonparser", "metajsonparser.*"]),
     package_data=dict.fromkeys(
-        find_packages(include=["cudf._lib*"]), ["*.pxd"],
+        find_packages(include=["metajsonparser._lib*"]), ["*.pxd"],
     ),
     cmdclass=cmdclass,
     zip_safe=False,

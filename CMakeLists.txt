@@ -26,6 +26,8 @@ ENDIF()
 
 include(GoogleTest)
 
+find_package(rmm)
+
 add_library(lib-meta-json-parser INTERFACE)
 
 target_compile_features(lib-meta-json-parser INTERFACE cxx_std_17 cuda_std_17)
@@ -67,12 +69,6 @@ target_sources(lib-meta-json-parser INTERFACE
     include/meta_json_parser/kernel_context.cuh
     include/meta_json_parser/kernel_launch_configuration.cuh
     include/meta_json_parser/kernel_launcher.cuh
-    include/meta_json_parser/memory/allocator.h
-    include/meta_json_parser/memory/config.h
-    include/meta_json_parser/memory/config_transform.h
-    include/meta_json_parser/memory/pool.h
-    include/meta_json_parser/memory_configuration.h
-    include/meta_json_parser/memory_request.h
     include/meta_json_parser/meta_math.h
     include/meta_json_parser/meta_memory_manager.cuh
     include/meta_json_parser/meta_utility/is_base_of_template.h
@@ -88,7 +84,6 @@ target_sources(lib-meta-json-parser INTERFACE
     include/meta_json_parser/output_printer.cuh
     include/meta_json_parser/parse.cuh
     include/meta_json_parser/parser_configuration.h
-    include/meta_json_parser/parser_input.h
     include/meta_json_parser/parser_kernel.cuh
     include/meta_json_parser/parser_output_device.cuh
     include/meta_json_parser/parser_output_host.cuh
@@ -109,6 +104,12 @@ target_sources(meta-cudf-parser-1 PUBLIC
     include/meta_json_parser/checkpoint_results.cpp
     include/meta_json_parser/checkpoint_results.h
 )
+if (USE_LIBCUDF)
+    target_sources(meta-cudf-parser-1 PUBLIC
+            meta_cudf/dask_integration.cu
+            meta_cudf/dask_integration.cuh
+    )
+endif()
 target_link_libraries(meta-cudf-parser-1 PUBLIC lib-meta-json-parser)
 
 target_include_directories(meta-cudf-parser-1 PUBLIC
@@ -226,6 +227,13 @@ if (USE_LIBCUDF)
 
 endif()
 
+if (MEASURE_THROUGHPUT)
+    message("MEASURE_THROUGHPUT is true, compiling with throughput profiling")
+    target_compile_definitions(meta-cudf-parser-1 PRIVATE
+            MEASURE_THROUGHPUT=1
+            )
+endif()
+
 target_sources(meta-json-parser-benchmark PRIVATE
 	benchmark/main.cu
 	include/meta_json_parser/debug_helpers.cpp
@@ -273,3 +281,4 @@ target_link_libraries(meta-cudf-parser-mgr PRIVATE
         -L/opt/conda/envs/rapids/lib
         )
 target_link_libraries(meta-cudf-parser-mgr PRIVATE meta-cudf-parser-1)
+target_link_libraries(meta-cudf-parser-mgr PUBLIC  rmm::rmm)

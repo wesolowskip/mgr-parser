@@ -26,7 +26,7 @@ struct ParserOutputHost
 
 	size_t m_size;
 	const KernelLaunchConfiguration* m_launch_config;
-	std::vector<thrust::host_vector<uint8_t>> m_h_outputs;
+	std::vector<thrust::host_vector<uint8_t, thrust::cuda::experimental::pinned_allocator<uint8_t>>> m_h_outputs;
 
 	ParserOutputHost() : m_size(0) {}
 
@@ -37,7 +37,7 @@ struct ParserOutputHost
 			using Request = decltype(i);
 			using Tag = typename Request::OutputTag;
 			if (!OM::template HaveOption<Tag, OutputOptHelpBuffer>())
-				m_h_outputs[idx] = thrust::host_vector<uint8_t>(
+				m_h_outputs[idx] = thrust::host_vector<uint8_t, thrust::cuda::experimental::pinned_allocator<uint8_t>>(
 					OM::template ToAlloc<Tag>(m_launch_config, m_size)
 				);
 			++idx;

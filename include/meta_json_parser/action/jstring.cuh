@@ -3,9 +3,9 @@
 #include <utility>
 #include <boost/mp11/list.hpp>
 #include <boost/mp11/map.hpp>
+#include <rmm/exec_policy.hpp>
 #include <thrust/transform.h>
 #include <thrust/functional.h>
-#include <thrust/execution_policy.h>
 #include <meta_json_parser/json_parse.cuh>
 #include <meta_json_parser/static_buffer.h>
 #include <meta_json_parser/output_manager.cuh>
@@ -453,7 +453,7 @@ struct JStringDynamicCopyV2
 		size_t temp_storage_bytes = 0;
 
 		thrust::transform(
-			thrust::cuda::par.on(pk.m_stream),
+            rmm::exec_policy(pk.m_stream, pk.m_mr),
 			indices,
 			indices + count,
 			offsets,

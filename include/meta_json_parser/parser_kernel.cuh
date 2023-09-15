@@ -70,19 +70,21 @@ struct ParserKernel
 
 	static const size_t CUB_BUFFER_SIZE = 0x1000000;
 
-	ROB* m_d_rob;
+    ROB* m_d_rob;
 	uint8_t* m_cub_buffer;
 	const KernelLaunchConfiguration* m_launch_config;
-	cudaStream_t m_stream;
+	rmm::cuda_stream_view m_stream;
+    rmm::mr::device_memory_resource* m_mr;
 
-	ParserKernel(const KernelLaunchConfiguration* launch_config, cudaStream_t stream = 0)
-		: m_launch_config(launch_config), m_stream(stream)
+
+	ParserKernel(const KernelLaunchConfiguration* launch_config, rmm::cuda_stream_view stream, rmm::mr::device_memory_resource* mr)
+		: m_launch_config(launch_config), m_stream(stream), m_mr(mr)
 	{
-		cudaMalloc(&m_d_rob, sizeof(ROB));
-		cudaMalloc(&m_cub_buffer, CUB_BUFFER_SIZE);
+        m_d_rob = static_cast<ROB*>(m_mr->allocate(sizeof(ROB), m_stream));
+		m_cub_buffer = static_cast<uint8_t*>(m_mr->allocate(CUB_BUFFER_SIZE, m_stream));
 		ROB rob;
 		M3::FillReadOnlyBuffer(rob, m_launch_config);
-		cudaMemcpyAsync(m_d_rob, &rob, sizeof(ROB), cudaMemcpyHostToDevice, m_stream);
+        cudaMemcpyAsync(m_d_rob, &rob, sizeof(ROB), cudaMemcpyHostToDevice, m_stream);
 	}
 
 	void Run(
@@ -134,8 +136,8 @@ struct ParserKernel
 
 	~ParserKernel()
 	{
-		cudaFree(m_d_rob);
-		cudaFree(m_cub_buffer);
+        m_mr->deallocate(m_d_rob, sizeof(ROB), m_stream);
+        m_mr->deallocate(m_cub_buffer, CUB_BUFFER_SIZE, m_stream);
 	}
 
 	static thrust::host_vector<uint64_t> OutputSizes()
